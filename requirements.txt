@@ -1,0 +1,5 @@
+numpy==2.4.4
+opencv-python==4.13.0.92
+pluggy==1.6.0
+Pygments==2.20.0
+pytest==9.0.3
