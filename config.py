@@ -1,7 +1,4 @@
-"""Konfiguracja projektu stereo vision - pomiar obiektow na europalecie.
-
-Wartosci domyslne moga byc nadpisane przez zmienne srodowiskowe (patrz env.example).
-"""
+# config.py
 import os
 import cv2
 

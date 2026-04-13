@@ -1,3 +1,4 @@
+# calibration.py
 """Modul kalibracji kamer - metoda Zhanga (OpenCV).
 Obsluguje kalibracje pojedynczej kamery oraz kalibracje stereo.
 """
