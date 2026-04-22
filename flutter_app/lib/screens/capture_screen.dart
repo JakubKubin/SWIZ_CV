@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/app_state.dart';
+import '../theme/app_theme.dart';
 import '../widgets/app_banner.dart';
 
 class CaptureScreen extends StatefulWidget {
@@ -52,15 +53,11 @@ class _CaptureScreenState extends State<CaptureScreen> {
   void _startCountdown() {
     _countdownTimer?.cancel();
     final triggerAt = _appState.captureTriggerAt!;
-    // Capture the offset at the moment the trigger arrives.
-    // serverTimeOffset = server_clock - local_clock, so:
-    //   remaining = triggerAt(server) - server_now
-    //             = triggerAt - (local_now + serverTimeOffset)
     final offset = _appState.serverTimeOffset;
     _appState.clearCaptureTrigger();
 
     _countdownTimer = Timer.periodic(const Duration(milliseconds: 50), (t) {
-      final now = DateTime.now().millisecondsSinceEpoch / 1000.0;
+      final now       = DateTime.now().millisecondsSinceEpoch / 1000.0;
       final remaining = ((triggerAt - now - offset) * 1000).round();
       if (remaining <= 0) {
         t.cancel();
@@ -99,15 +96,12 @@ class _CaptureScreenState extends State<CaptureScreen> {
 
     setState(() => _uploading = true);
     final bytes = await xfile.readAsBytes();
-    final ok = await _appState.uploadCaptureImage(bytes);
+    final ok    = await _appState.uploadCaptureImage(bytes);
     if (mounted) {
       setState(() => _uploading = false);
       if (ok) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Zdjęcie przesłane'),
-            backgroundColor: Colors.green,
-          ),
+          const SnackBar(content: Text('Zdjęcie przesłane')),
         );
       }
     }
@@ -124,8 +118,10 @@ class _CaptureScreenState extends State<CaptureScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final state = context.watch<AppState>();
-    final theme = Theme.of(context);
+    final state   = context.watch<AppState>();
+    final theme   = Theme.of(context);
+    final cs      = theme.colorScheme;
+    final tt      = theme.textTheme;
     final session = state.session;
 
     final myCaptures = session?.devices
@@ -134,7 +130,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
             ?.captureFrameCount ??
         0;
 
-    final allCaptured = session?.allCaptured ?? false;
+    final allCaptured    = session?.allCaptured ?? false;
     final isCountingDown = _remainingMs > 0;
 
     return Scaffold(
@@ -142,26 +138,27 @@ class _CaptureScreenState extends State<CaptureScreen> {
         title: const Text('Przechwycenie'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh),
+            icon: const Icon(Icons.refresh_outlined),
+            tooltip: 'Odśwież',
             onPressed: () => state.refreshSession(),
           ),
         ],
       ),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         children: [
           if (state.error != null)
             AppBanner(
-              color: theme.colorScheme.errorContainer,
-              textColor: theme.colorScheme.onErrorContainer,
+              color: cs.errorContainer,
+              textColor: cs.onErrorContainer,
               icon: Icons.error_outline,
               message: state.error!,
               onClose: state.clearError,
             ),
           if (state.info != null)
             AppBanner(
-              color: theme.colorScheme.primaryContainer,
-              textColor: theme.colorScheme.onPrimaryContainer,
+              color: cs.secondaryContainer,
+              textColor: cs.onSecondaryContainer,
               icon: Icons.info_outline,
               message: state.info!,
               onClose: state.clearInfo,
@@ -170,26 +167,25 @@ class _CaptureScreenState extends State<CaptureScreen> {
           // Countdown display
           if (isCountingDown)
             Card(
-              color: Colors.deepOrange.shade50,
               child: Padding(
-                padding: const EdgeInsets.all(24),
+                padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
                 child: Column(
                   children: [
-                    const Text(
-                      'Przygotuj się!',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                    ),
+                    Text('Przygotuj się',
+                        style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
                     const SizedBox(height: 12),
                     Text(
                       '${(_remainingMs / 1000.0).toStringAsFixed(1)} s',
                       style: TextStyle(
                         fontSize: 64,
                         fontWeight: FontWeight.bold,
-                        color: Colors.deepOrange.shade700,
+                        color: AppColors.warning,
+                        letterSpacing: -2,
                       ),
                     ),
                     const SizedBox(height: 8),
-                    const Text('Aparat zostanie uruchomiony automatycznie'),
+                    Text('Aparat zostanie uruchomiony automatycznie',
+                        style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
                   ],
                 ),
               ),
@@ -204,19 +200,32 @@ class _CaptureScreenState extends State<CaptureScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Status urządzeń', style: theme.textTheme.titleMedium),
+                      Text('Status urządzeń', style: tt.titleSmall?.copyWith(
+                          color: cs.primary, fontWeight: FontWeight.w600)),
                       const SizedBox(height: 12),
                       ...session.devices.map(
-                        (d) => ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          leading: Icon(
-                            d.captureFrameCount > 0
-                                ? Icons.check_circle
-                                : Icons.radio_button_unchecked,
-                            color: d.captureFrameCount > 0 ? Colors.green : Colors.grey,
+                        (d) => Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 6, height: 6,
+                                decoration: BoxDecoration(
+                                  color: d.captureFrameCount > 0
+                                      ? AppColors.success
+                                      : cs.outline,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(d.deviceId, style: tt.bodySmall),
+                              ),
+                              Text('${d.captureFrameCount} zdjęć',
+                                  style: tt.bodySmall?.copyWith(
+                                      color: cs.onSurfaceVariant)),
+                            ],
                           ),
-                          title: Text(d.deviceId),
-                          trailing: Text('${d.captureFrameCount} zdjęć'),
                         ),
                       ),
                     ],
@@ -230,22 +239,23 @@ class _CaptureScreenState extends State<CaptureScreen> {
             if (state.isLeader)
               ElevatedButton.icon(
                 onPressed: state.isLoading ? null : _triggerCapture,
-                icon: const Icon(Icons.flash_on),
+                icon: const Icon(Icons.flash_on_outlined),
                 label: const Text('Wyzwól przechwycenie (3 s odliczanie)'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.deepOrange,
+                  backgroundColor: AppColors.stateProcessing,
                   foregroundColor: Colors.white,
                 ),
               )
             else
               Card(
                 child: Padding(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   child: Row(
-                    children: const [
-                      Icon(Icons.info_outline, size: 18),
-                      SizedBox(width: 8),
-                      Text('Przechwycenie wyzwala lider sesji'),
+                    children: [
+                      Icon(Icons.info_outline, size: 16, color: cs.onSurfaceVariant),
+                      const SizedBox(width: 8),
+                      Text('Przechwycenie wyzwala lider sesji',
+                          style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
                     ],
                   ),
                 ),
@@ -253,18 +263,19 @@ class _CaptureScreenState extends State<CaptureScreen> {
 
             const SizedBox(height: 8),
 
-            // Manual capture/upload button
+            // Manual capture / upload button
             ElevatedButton.icon(
               onPressed: (_uploading || state.isLoading) ? null : _captureAndUpload,
               icon: _uploading
                   ? const SizedBox(
-                      width: 18,
-                      height: 18,
+                      width: 18, height: 18,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : Icon(kIsWeb ? Icons.upload_file : Icons.camera_alt),
+                  : Icon(kIsWeb ? Icons.upload_file_outlined : Icons.camera_alt_outlined),
               label: Text(
-                kIsWeb ? 'Prześlij zdjęcie pomiaru' : 'Zrób zdjęcie ($myCaptures wykonanych)',
+                kIsWeb
+                    ? 'Prześlij zdjęcie pomiaru'
+                    : 'Zrób zdjęcie ($myCaptures wykonanych)',
               ),
             ),
 
@@ -273,23 +284,26 @@ class _CaptureScreenState extends State<CaptureScreen> {
             // Start measurement (leader, when all captured)
             if (state.isLeader)
               ElevatedButton.icon(
-                onPressed: (allCaptured && !state.isLoading) ? _startMeasurement : null,
+                onPressed: (allCaptured && !state.isLoading)
+                    ? _startMeasurement
+                    : null,
                 icon: state.isLoading
                     ? const SizedBox(
-                        width: 18,
-                        height: 18,
+                        width: 18, height: 18,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const Icon(Icons.straighten),
+                    : const Icon(Icons.straighten_outlined),
                 label: Text(
                   allCaptured
                       ? 'Uruchom pomiar'
                       : 'Poczekaj aż wszystkie urządzenia wykonają zdjęcie',
                 ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: allCaptured ? Colors.green : null,
-                  foregroundColor: allCaptured ? Colors.white : null,
-                ),
+                style: allCaptured
+                    ? ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.stateDone,
+                        foregroundColor: Colors.white,
+                      )
+                    : null,
               ),
           ],
         ],

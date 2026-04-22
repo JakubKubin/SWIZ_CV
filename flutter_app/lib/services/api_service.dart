@@ -1,4 +1,4 @@
-// api_service.dart — klient HTTP do backendu FastAPI
+// api_service.dart - klient HTTP do backendu FastAPI
 
 import 'dart:convert';
 import 'dart:typed_data';

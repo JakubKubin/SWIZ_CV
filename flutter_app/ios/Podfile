@@ -1,4 +1,4 @@
-# iOS 13.0 minimum — Flutter + web_socket_channel + image_picker wszystkie go wymagają.
+# iOS 13.0 minimum - Flutter + web_socket_channel + image_picker wszystkie go wymagają.
 platform :ios, '13.0'
 
 # Wyłącz statystyki CocoaPods (przyspiesza build).

@@ -14,17 +14,17 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final _serverCtrl = TextEditingController(text: 'http://192.168.1.1:8000');
   final _deviceCtrl = TextEditingController();
-  final _macCtrl = TextEditingController();
-  final _sidCtrl = TextEditingController();
+  final _macCtrl    = TextEditingController();
+  final _sidCtrl    = TextEditingController();
   bool _isLeader = true;
-  bool _joining = false;
+  bool _busy     = false;
 
   @override
   void initState() {
     super.initState();
-    final state = context.read<AppState>();
-    _deviceCtrl.text = state.deviceId;
-    _macCtrl.text = state.mac;
+    final s = context.read<AppState>();
+    _deviceCtrl.text = s.deviceId;
+    _macCtrl.text    = s.mac;
   }
 
   @override
@@ -36,25 +36,23 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  void _applyFields(AppState state) {
-    state.serverUrl = _serverCtrl.text.trim();
-  }
+  void _syncUrl(AppState s) => s.serverUrl = _serverCtrl.text.trim();
 
-  Future<void> _createAndJoin(AppState state) async {
-    _applyFields(state);
-    setState(() => _joining = true);
-    final ok = await state.createAndJoin(
+  Future<void> _createAndJoin(AppState s) async {
+    _syncUrl(s);
+    setState(() => _busy = true);
+    final ok = await s.createAndJoin(
       _deviceCtrl.text.trim(),
       _macCtrl.text.trim(),
       true,
     );
-    setState(() => _joining = false);
+    setState(() => _busy = false);
     if (ok && mounted) {
       Navigator.push(context, MaterialPageRoute(builder: (_) => const SessionScreen()));
     }
   }
 
-  Future<void> _joinExisting(AppState state) async {
+  Future<void> _joinExisting(AppState s) async {
     final sid = _sidCtrl.text.trim();
     if (sid.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -62,246 +60,279 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       return;
     }
-    _applyFields(state);
-    setState(() => _joining = true);
-    final ok = await state.joinExisting(
+    _syncUrl(s);
+    setState(() => _busy = true);
+    final ok = await s.joinExisting(
       sid,
       _deviceCtrl.text.trim(),
       _macCtrl.text.trim(),
       _isLeader,
     );
-    setState(() => _joining = false);
+    setState(() => _busy = false);
     if (ok && mounted) {
       Navigator.push(context, MaterialPageRoute(builder: (_) => const SessionScreen()));
     }
   }
 
-  Future<void> _syntheticTest(AppState state) async {
-    _applyFields(state);
-    setState(() => _joining = true);
-    final result = await state.runSyntheticTest();
-    setState(() => _joining = false);
-    if (!mounted) return;
-    if (result != null) {
-      showDialog(
-        context: context,
-        builder: (_) => AlertDialog(
-          title: const Text('Test syntetyczny'),
-          content: Text(
-            'W: ${result.widthMm.toStringAsFixed(0)} mm\n'
-            'L: ${result.lengthMm.toStringAsFixed(0)} mm\n'
-            'H: ${result.heightMm.toStringAsFixed(0)} mm\n'
-            'Walidacja: ${result.validationPassed ? "OK" : "FAIL"}',
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK')),
+  Future<void> _syntheticTest(AppState s) async {
+    _syncUrl(s);
+    setState(() => _busy = true);
+    final result = await s.runSyntheticTest();
+    setState(() => _busy = false);
+    if (!mounted || result == null) return;
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Test syntetyczny'),
+        content: Table(
+          columnWidths: const {0: IntrinsicColumnWidth(), 1: FlexColumnWidth()},
+          children: [
+            _tableRow('Szerokość', '${result.widthMm.toStringAsFixed(0)} mm'),
+            _tableRow('Długość',   '${result.lengthMm.toStringAsFixed(0)} mm'),
+            _tableRow('Wysokość',  '${result.heightMm.toStringAsFixed(0)} mm'),
+            _tableRow('Walidacja', result.validationPassed ? 'Zaliczona' : 'Niezaliczona'),
           ],
         ),
-      );
-    }
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Zamknij')),
+        ],
+      ),
+    );
   }
+
+  TableRow _tableRow(String label, String value) => TableRow(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 0),
+            child: Text(label,
+                style: const TextStyle(color: Colors.black54, fontSize: 13)),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
+            child: Text(value,
+                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+          ),
+        ],
+      );
 
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
-    final theme = Theme.of(context);
+    final cs    = Theme.of(context).colorScheme;
+    final tt    = Theme.of(context).textTheme;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('StereoVision Pomiar'),
+        title: const Text('StereoVision'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.wifi_find),
+            icon: const Icon(Icons.network_check),
             tooltip: 'Test połączenia',
-            onPressed: _joining
+            onPressed: _busy
                 ? null
                 : () async {
                     state.serverUrl = _serverCtrl.text.trim();
                     final ok = await state.testConnection();
                     if (!mounted) return;
                     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                      content: Text(ok ? 'Serwer dostępny ✓' : 'Brak połączenia z serwerem'),
-                      backgroundColor: ok ? Colors.green : Colors.red,
+                      content: Text(ok ? 'Serwer dostępny' : 'Brak połączenia z serwerem'),
+                      backgroundColor: ok ? null : cs.error,
                     ));
                   },
           ),
         ],
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Error banner
             if (state.error != null)
-              Card(
-                color: theme.colorScheme.errorContainer,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                  child: Row(
-                    children: [
-                      Icon(Icons.error_outline, color: theme.colorScheme.error),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(state.error!,
-                            style: TextStyle(color: theme.colorScheme.onErrorContainer)),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: state.clearError,
-                      ),
-                    ],
+              _ErrorBanner(message: state.error!, onClose: state.clearError),
+
+            _Section(
+              title: 'Połączenie',
+              child: TextField(
+                controller: _serverCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Adres serwera',
+                  hintText: 'http://192.168.1.1:8000',
+                  prefixIcon: Icon(Icons.dns_outlined),
+                ),
+                keyboardType: TextInputType.url,
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            _Section(
+              title: 'Urządzenie',
+              child: Column(
+                children: [
+                  TextField(
+                    controller: _deviceCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'ID urządzenia',
+                      prefixIcon: Icon(Icons.smartphone_outlined),
+                    ),
                   ),
-                ),
-              ),
-
-            // Server config card
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Serwer', style: theme.textTheme.titleMedium),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _serverCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'URL serwera',
-                        hintText: 'http://192.168.1.1:8000',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.dns),
-                      ),
-                      keyboardType: TextInputType.url,
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _macCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Adres MAC',
+                      prefixIcon: Icon(Icons.router_outlined),
                     ),
-                  ],
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            _Section(
+              title: 'Nowa sesja',
+              child: SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _busy ? null : () => _createAndJoin(state),
+                  icon: _busy
+                      ? const SizedBox(
+                          width: 16, height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.add),
+                  label: const Text('Utwórz sesję i dołącz jako lider'),
                 ),
               ),
             ),
 
             const SizedBox(height: 12),
 
-            // Device config card
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Urządzenie', style: theme.textTheme.titleMedium),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _deviceCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'ID urządzenia',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.phone_android),
-                      ),
+            _Section(
+              title: 'Dołącz do sesji',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextField(
+                    controller: _sidCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'ID sesji',
+                      prefixIcon: Icon(Icons.link_outlined),
                     ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: _macCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Adres MAC',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.router),
-                      ),
+                  ),
+                  const SizedBox(height: 4),
+                  SwitchListTile(
+                    title: Text('Rola lidera', style: tt.bodyMedium),
+                    subtitle: Text(
+                      _isLeader ? 'Lewa kamera — zarządza sesją' : 'Prawa kamera — follower',
+                      style: tt.bodySmall,
                     ),
-                  ],
-                ),
+                    value: _isLeader,
+                    onChanged: (v) => setState(() => _isLeader = v),
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                  ),
+                  ElevatedButton.icon(
+                    onPressed: _busy ? null : () => _joinExisting(state),
+                    icon: const Icon(Icons.login_outlined),
+                    label: const Text('Dołącz'),
+                  ),
+                ],
               ),
             ),
 
             const SizedBox(height: 12),
 
-            // Create session card
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text('Nowa sesja (lider)', style: theme.textTheme.titleMedium),
-                    const SizedBox(height: 12),
-                    ElevatedButton.icon(
-                      onPressed: _joining ? null : () => _createAndJoin(state),
-                      icon: _joining
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.add_circle),
-                      label: const Text('Utwórz i dołącz jako lider'),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 12),
-
-            // Join existing session card
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text('Dołącz do sesji', style: theme.textTheme.titleMedium),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _sidCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'ID sesji',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.link),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    SwitchListTile(
-                      title: const Text('Dołącz jako lider'),
-                      value: _isLeader,
-                      onChanged: (v) => setState(() => _isLeader = v),
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                    ElevatedButton.icon(
-                      onPressed: _joining ? null : () => _joinExisting(state),
-                      icon: const Icon(Icons.login),
-                      label: const Text('Dołącz'),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 12),
-
-            // Synthetic test card
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text('Test syntetyczny', style: theme.textTheme.titleMedium),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Uruchamia pełny pipeline bez kamer (dane generowane syntetycznie).',
-                      style: theme.textTheme.bodySmall,
-                    ),
-                    const SizedBox(height: 12),
-                    OutlinedButton.icon(
-                      onPressed: _joining ? null : () => _syntheticTest(state),
-                      icon: const Icon(Icons.science),
+            _Section(
+              title: 'Diagnostyka',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Test syntetyczny uruchamia pełny pipeline obliczeniowy '
+                    'na sztucznie wygenerowanych danych — bez kamer.',
+                    style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _busy ? null : () => _syntheticTest(state),
+                      icon: const Icon(Icons.science_outlined),
                       label: const Text('Uruchom test syntetyczny'),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
+
+            const SizedBox(height: 24),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _Section extends StatelessWidget {
+  final String title;
+  final Widget child;
+
+  const _Section({required this.title, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final tt = Theme.of(context).textTheme;
+    final cs = Theme.of(context).colorScheme;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title,
+                style: tt.labelLarge?.copyWith(
+                  color: cs.primary,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.5,
+                )),
+            const SizedBox(height: 12),
+            child,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ErrorBanner extends StatelessWidget {
+  final String message;
+  final VoidCallback onClose;
+
+  const _ErrorBanner({required this.message, required this.onClose});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: cs.errorContainer,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: cs.error.withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.error_outline, color: cs.error, size: 18),
+          const SizedBox(width: 10),
+          Expanded(child: Text(message,
+              style: TextStyle(color: cs.onErrorContainer, fontSize: 13))),
+          GestureDetector(
+            onTap: onClose,
+            child: Icon(Icons.close, color: cs.onErrorContainer, size: 18),
+          ),
+        ],
       ),
     );
   }

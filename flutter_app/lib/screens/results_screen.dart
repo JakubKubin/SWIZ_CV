@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../models/models.dart';
 import '../providers/app_state.dart';
+import '../theme/app_theme.dart';
 
 class ResultsScreen extends StatefulWidget {
   const ResultsScreen({super.key});
@@ -15,7 +16,6 @@ class _ResultsScreenState extends State<ResultsScreen> {
   @override
   void initState() {
     super.initState();
-    // Fetch measurement if not already loaded
     final state = context.read<AppState>();
     if (state.measurement == null) {
       state.fetchMeasurementNow();
@@ -53,7 +53,8 @@ class _ResultsScreenState extends State<ResultsScreen> {
         title: const Text('Wyniki pomiaru'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh),
+            icon: const Icon(Icons.refresh_outlined),
+            tooltip: 'Odśwież',
             onPressed: () => state.fetchMeasurementNow(),
           ),
         ],
@@ -65,7 +66,8 @@ class _ResultsScreenState extends State<ResultsScreen> {
               : _ResultsBody(
                   result: state.measurement!,
                   theme: theme,
-                  onShowReport: () => _showReport(context, state.measurement!.report),
+                  onShowReport: () =>
+                      _showReport(context, state.measurement!.report),
                 ),
     );
   }
@@ -78,35 +80,36 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final tt = Theme.of(context).textTheme;
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.analytics_outlined, size: 64, color: Colors.grey),
+            Icon(Icons.analytics_outlined, size: 56, color: cs.onSurfaceVariant),
             const SizedBox(height: 16),
-            const Text(
-              'Brak wyników',
-              style: TextStyle(fontSize: 20, color: Colors.grey),
-            ),
+            Text('Brak wyników',
+                style: tt.titleMedium?.copyWith(color: cs.onSurfaceVariant)),
             const SizedBox(height: 8),
-            const Text(
-              'Uruchom pomiar ze ekranu Przechwycenia,\nalbo odśwież jeśli pipeline już się zakończył.',
+            Text(
+              'Uruchom pomiar ze ekranu Przechwycenia\nalbo odśwież jeśli pipeline się zakończył.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey),
+              style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
             ),
             const SizedBox(height: 24),
             ElevatedButton.icon(
               onPressed: () => state.fetchMeasurementNow(),
-              icon: const Icon(Icons.refresh),
+              icon: const Icon(Icons.refresh_outlined),
               label: const Text('Pobierz wyniki'),
             ),
             if (state.error != null) ...[
               const SizedBox(height: 16),
               Text(
                 state.error!,
-                style: const TextStyle(color: Colors.red),
+                style: tt.bodySmall?.copyWith(color: cs.error),
                 textAlign: TextAlign.center,
               ),
             ],
@@ -119,8 +122,8 @@ class _EmptyState extends StatelessWidget {
 
 class _ResultsBody extends StatelessWidget {
   final MeasurementResult result;
-  final ThemeData theme;
-  final VoidCallback onShowReport;
+  final ThemeData         theme;
+  final VoidCallback      onShowReport;
 
   const _ResultsBody({
     required this.result,
@@ -130,22 +133,24 @@ class _ResultsBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs     = theme.colorScheme;
+    final tt     = theme.textTheme;
     final passed = result.validationPassed;
 
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       children: [
         // Validation badge
         Card(
-          color: passed ? Colors.green.shade50 : Colors.red.shade50,
+          color: passed ? cs.primaryContainer : cs.errorContainer,
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             child: Row(
               children: [
                 Icon(
-                  passed ? Icons.check_circle : Icons.cancel,
-                  color: passed ? Colors.green : Colors.red,
-                  size: 32,
+                  passed ? Icons.check_circle_outline : Icons.cancel_outlined,
+                  color: passed ? cs.primary : cs.error,
+                  size: 28,
                 ),
                 const SizedBox(width: 12),
                 Column(
@@ -153,16 +158,18 @@ class _ResultsBody extends StatelessWidget {
                   children: [
                     Text(
                       passed ? 'Pomiar zaliczony' : 'Pomiar niezaliczony',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: passed ? Colors.green.shade800 : Colors.red.shade800,
+                      style: tt.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: passed ? cs.onPrimaryContainer : cs.onErrorContainer,
                       ),
                     ),
                     if (!passed && result.issues.isNotEmpty)
                       Text(
                         'Problemy: ${result.issues.length}',
-                        style: TextStyle(color: Colors.red.shade600),
+                        style: tt.bodySmall?.copyWith(
+                            color: passed
+                                ? cs.onPrimaryContainer
+                                : cs.onErrorContainer),
                       ),
                   ],
                 ),
@@ -174,22 +181,44 @@ class _ResultsBody extends StatelessWidget {
         const SizedBox(height: 12),
 
         // Dimension cards
-        Text('Wymiary obiektu', style: theme.textTheme.titleMedium),
+        Text('Wymiary obiektu',
+            style: tt.labelMedium?.copyWith(
+                color: cs.onSurfaceVariant, letterSpacing: 0.3)),
         const SizedBox(height: 8),
         Row(
           children: [
-            Expanded(child: _DimCard(label: 'Szerokość', valueMm: result.widthMm, color: Colors.blue)),
+            Expanded(
+              child: _DimCard(
+                label: 'Szerokość',
+                valueMm: result.widthMm,
+                color: AppColors.dimWidth,
+              ),
+            ),
             const SizedBox(width: 8),
-            Expanded(child: _DimCard(label: 'Długość', valueMm: result.lengthMm, color: Colors.teal)),
+            Expanded(
+              child: _DimCard(
+                label: 'Długość',
+                valueMm: result.lengthMm,
+                color: AppColors.dimLength,
+              ),
+            ),
             const SizedBox(width: 8),
-            Expanded(child: _DimCard(label: 'Wysokość', valueMm: result.heightMm, color: Colors.orange)),
+            Expanded(
+              child: _DimCard(
+                label: 'Wysokość',
+                valueMm: result.heightMm,
+                color: AppColors.dimHeight,
+              ),
+            ),
           ],
         ),
 
         const SizedBox(height: 16),
 
         // Quality metrics
-        Text('Jakość pomiaru', style: theme.textTheme.titleMedium),
+        Text('Jakość pomiaru',
+            style: tt.labelMedium?.copyWith(
+                color: cs.onSurfaceVariant, letterSpacing: 0.3)),
         const SizedBox(height: 8),
         Card(
           child: Padding(
@@ -201,13 +230,13 @@ class _ResultsBody extends StatelessWidget {
                   value: '${result.palletRmsMm.toStringAsFixed(2)} mm',
                   ok: result.palletRmsMm < 30,
                 ),
-                const Divider(height: 20),
+                Divider(height: 20, color: cs.outlineVariant.withOpacity(0.5)),
                 _MetricRow(
                   label: 'Punkty obiektu',
                   value: result.nObjectPts.toString(),
                   ok: result.nObjectPts > 50,
                 ),
-                const Divider(height: 20),
+                Divider(height: 20, color: cs.outlineVariant.withOpacity(0.5)),
                 _MetricRow(
                   label: 'Inliery palety',
                   value: result.nPalletInliers.toString(),
@@ -221,10 +250,12 @@ class _ResultsBody extends StatelessWidget {
         // Issues list
         if (result.issues.isNotEmpty) ...[
           const SizedBox(height: 12),
-          Text('Problemy', style: theme.textTheme.titleMedium),
+          Text('Problemy',
+              style: tt.labelMedium?.copyWith(
+                  color: cs.onSurfaceVariant, letterSpacing: 0.3)),
           const SizedBox(height: 8),
           Card(
-            color: Colors.red.shade50,
+            color: cs.errorContainer,
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: Column(
@@ -232,13 +263,18 @@ class _ResultsBody extends StatelessWidget {
                 children: result.issues
                     .map(
                       (issue) => Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 2),
+                        padding: const EdgeInsets.symmetric(vertical: 3),
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Icon(Icons.warning_amber, size: 16, color: Colors.red),
+                            Icon(Icons.warning_amber_outlined,
+                                size: 15, color: cs.error),
                             const SizedBox(width: 6),
-                            Expanded(child: Text(issue)),
+                            Expanded(
+                              child: Text(issue,
+                                  style: tt.bodySmall?.copyWith(
+                                      color: cs.onErrorContainer)),
+                            ),
                           ],
                         ),
                       ),
@@ -251,12 +287,13 @@ class _ResultsBody extends StatelessWidget {
 
         const SizedBox(height: 16),
 
-        // Show report button
         OutlinedButton.icon(
           onPressed: onShowReport,
-          icon: const Icon(Icons.description),
+          icon: const Icon(Icons.description_outlined),
           label: const Text('Pokaż pełny raport tekstowy'),
         ),
+
+        const SizedBox(height: 8),
       ],
     );
   }
@@ -265,18 +302,27 @@ class _ResultsBody extends StatelessWidget {
 class _DimCard extends StatelessWidget {
   final String label;
   final double valueMm;
-  final Color color;
+  final Color  color;
 
-  const _DimCard({required this.label, required this.valueMm, required this.color});
+  const _DimCard({
+    required this.label,
+    required this.valueMm,
+    required this.color,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final tt = Theme.of(context).textTheme;
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
         child: Column(
           children: [
-            Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            Text(label,
+                style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
+                textAlign: TextAlign.center),
             const SizedBox(height: 6),
             Text(
               valueMm.toStringAsFixed(0),
@@ -286,7 +332,8 @@ class _DimCard extends StatelessWidget {
                 color: color,
               ),
             ),
-            const Text('mm', style: TextStyle(fontSize: 12, color: Colors.grey)),
+            Text('mm',
+                style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
           ],
         ),
       ),
@@ -297,24 +344,35 @@ class _DimCard extends StatelessWidget {
 class _MetricRow extends StatelessWidget {
   final String label;
   final String value;
-  final bool ok;
+  final bool   ok;
 
-  const _MetricRow({required this.label, required this.value, required this.ok});
+  const _MetricRow({
+    required this.label,
+    required this.value,
+    required this.ok,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final tt = Theme.of(context).textTheme;
+
     return Row(
       children: [
-        Icon(
-          ok ? Icons.check : Icons.warning_amber,
-          size: 18,
-          color: ok ? Colors.green : Colors.orange,
+        Container(
+          width: 6, height: 6,
+          decoration: BoxDecoration(
+            color: ok ? AppColors.success : AppColors.warning,
+            shape: BoxShape.circle,
+          ),
         ),
-        const SizedBox(width: 8),
-        Expanded(child: Text(label)),
+        const SizedBox(width: 10),
+        Expanded(child: Text(label, style: tt.bodySmall)),
         Text(
           value,
-          style: const TextStyle(fontWeight: FontWeight.bold),
+          style: tt.bodySmall?.copyWith(
+              fontWeight: FontWeight.w600,
+              color: ok ? cs.onSurface : AppColors.warning),
         ),
       ],
     );

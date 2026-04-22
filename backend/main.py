@@ -280,7 +280,7 @@ async def compute_calibration(session_id: str):
         raise HTTPException(status_code=409, detail="Kalibracja już trwa")
 
     if session.state == SessionState.PROCESSING:
-        raise HTTPException(status_code=409, detail="Pipeline pomiarowy trwa — poczekaj")
+        raise HTTPException(status_code=409, detail="Pipeline pomiarowy trwa - poczekaj")
 
     min_frames = session.min_calib_frames()
     if min_frames < 3:
@@ -302,11 +302,11 @@ async def get_calibration_status(session_id: str):
     session = await _get_or_404(session_id)
 
     if session.state == SessionState.CALIBRATING:
-        message = "Kalibracja w toku — poczekaj na wynik WebSocket"
+        message = "Kalibracja w toku - poczekaj na wynik WebSocket"
     elif session.calib_result:
         message = f"Kalibracja OK (reproj_error={session.calib_result.reproj_error:.3f} px)"
     else:
-        message = "Brak kalibracji — prześlij obrazy i wywołaj /compute"
+        message = "Brak kalibracji - prześlij obrazy i wywołaj /compute"
 
     return CalibStatusOut(
         state=session.state,
@@ -440,7 +440,7 @@ async def run_measurement(session_id: str):
     if session.min_capture_frames() < 1:
         raise HTTPException(
             status_code=409,
-            detail="Brak zdjęć pomiarowych — prześlij zdjecia przez /capture/images",
+            detail="Brak zdjęć pomiarowych - prześlij zdjecia przez /capture/images",
         )
 
     await store.set_state(session_id, SessionState.PROCESSING)
@@ -462,7 +462,7 @@ async def get_measurement(session_id: str):
     if session.meas_result is None:
         raise HTTPException(
             status_code=404,
-            detail="Brak wynikow pomiaru — uruchom POST /measure",
+            detail="Brak wynikow pomiaru - uruchom POST /measure",
         )
 
     return _meas_to_out(session.meas_result)
@@ -499,7 +499,7 @@ async def measure_synthetic():
     przetwarza przez SGBM i zwraca pomiary wymiarów.
 
     Uwaga: Scena syntetyczna używa SGBM na płaskim jednolitym tle, więc
-    detekcja palety może się nie udać — wtedy zwracany jest błąd 422.
+    detekcja palety może się nie udać - wtedy zwracany jest błąd 422.
     """
     try:
         result = await synthetic_measure()

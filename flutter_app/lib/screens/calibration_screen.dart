@@ -4,6 +4,8 @@ import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/app_state.dart';
+import '../theme/app_theme.dart';
+import '../widgets/app_banner.dart';
 
 class CalibrationScreen extends StatefulWidget {
   const CalibrationScreen({super.key});
@@ -45,10 +47,7 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
       setState(() => _uploading = false);
       if (ok) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Klatka przesłana'),
-            backgroundColor: Colors.green,
-          ),
+          const SnackBar(content: Text('Klatka przesłana')),
         );
       }
     }
@@ -65,15 +64,18 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final state = context.watch<AppState>();
-    final theme = Theme.of(context);
+    final state   = context.watch<AppState>();
+    final theme   = Theme.of(context);
+    final cs      = theme.colorScheme;
+    final tt      = theme.textTheme;
     final session = state.session;
+
     final myFrames = session?.devices
             .where((d) => d.deviceId == state.deviceId)
             .firstOrNull
             ?.calibFrameCount ??
         0;
-    final minFrames = session?.minCalibFrames ?? 0;
+    final minFrames    = session?.minCalibFrames ?? 0;
     final canCalibrate = state.isLeader && minFrames >= 3;
 
     return Scaffold(
@@ -81,54 +83,30 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
         title: const Text('Kalibracja'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh),
+            icon: const Icon(Icons.refresh_outlined),
+            tooltip: 'Odśwież',
             onPressed: () => state.refreshSession(),
           ),
         ],
       ),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         children: [
-          // Error banner
           if (state.error != null)
-            Card(
-              color: theme.colorScheme.errorContainer,
-              margin: const EdgeInsets.only(bottom: 12),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                child: Row(
-                  children: [
-                    Icon(Icons.error_outline, color: theme.colorScheme.error),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(state.error!,
-                          style: TextStyle(color: theme.colorScheme.onErrorContainer)),
-                    ),
-                    IconButton(icon: const Icon(Icons.close), onPressed: state.clearError),
-                  ],
-                ),
-              ),
+            AppBanner(
+              color: cs.errorContainer,
+              textColor: cs.onErrorContainer,
+              icon: Icons.error_outline,
+              message: state.error!,
+              onClose: state.clearError,
             ),
-
-          // Info banner
           if (state.info != null)
-            Card(
-              color: theme.colorScheme.primaryContainer,
-              margin: const EdgeInsets.only(bottom: 12),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                child: Row(
-                  children: [
-                    Icon(Icons.check_circle, color: theme.colorScheme.primary),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(state.info!,
-                          style: TextStyle(color: theme.colorScheme.onPrimaryContainer)),
-                    ),
-                    IconButton(icon: const Icon(Icons.close), onPressed: state.clearInfo),
-                  ],
-                ),
-              ),
+            AppBanner(
+              color: cs.secondaryContainer,
+              textColor: cs.onSecondaryContainer,
+              icon: Icons.info_outline,
+              message: state.info!,
+              onClose: state.clearInfo,
             ),
 
           // Instructions
@@ -138,19 +116,15 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.info_outline),
-                      const SizedBox(width: 8),
-                      Text('Instrukcja', style: theme.textTheme.titleMedium),
-                    ],
-                  ),
+                  Text('Instrukcja', style: tt.titleSmall?.copyWith(
+                      color: cs.primary, fontWeight: FontWeight.w600)),
                   const SizedBox(height: 8),
-                  const Text(
+                  Text(
                     '1. Przygotuj szachownicę kalibracyjną.\n'
                     '2. Sfotografuj ją z różnych kątów (min. 3 zdjęcia).\n'
-                    '3. Gdy wszystkie urządzenia mają ≥ 3 klatki, lider uruchamia kalibrację.\n'
+                    '3. Gdy wszystkie urządzenia mają min. 3 klatki, lider uruchamia kalibrację.\n'
                     '4. Poczekaj na wynik — błąd reprojekcji < 1 px to dobry wynik.',
+                    style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant, height: 1.5),
                   ),
                 ],
               ),
@@ -166,7 +140,8 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Postęp kalibracji', style: theme.textTheme.titleMedium),
+                  Text('Postęp kalibracji', style: tt.titleSmall?.copyWith(
+                      color: cs.primary, fontWeight: FontWeight.w600)),
                   const SizedBox(height: 12),
                   if (session != null)
                     ...session.devices.map(
@@ -175,23 +150,30 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
                         children: [
                           Row(
                             children: [
-                              Icon(
-                                d.isLeader ? Icons.star : Icons.phone_android,
-                                size: 16,
-                                color: d.isLeader ? Colors.amber : theme.colorScheme.primary,
+                              Container(
+                                width: 6, height: 6,
+                                decoration: BoxDecoration(
+                                  color: d.isLeader
+                                      ? AppColors.stateReady
+                                      : cs.onSurfaceVariant,
+                                  shape: BoxShape.circle,
+                                ),
                               ),
-                              const SizedBox(width: 6),
-                              Text(d.deviceId),
+                              const SizedBox(width: 8),
+                              Text(d.deviceId, style: tt.bodySmall),
                               const Spacer(),
-                              Text('${d.calibFrameCount} klatek'),
+                              Text('${d.calibFrameCount} klatek',
+                                  style: tt.bodySmall?.copyWith(
+                                      color: cs.onSurfaceVariant)),
                             ],
                           ),
-                          const SizedBox(height: 4),
+                          const SizedBox(height: 6),
                           ClipRRect(
                             borderRadius: BorderRadius.circular(4),
                             child: LinearProgressIndicator(
                               value: (d.calibFrameCount / 10.0).clamp(0.0, 1.0),
-                              minHeight: 8,
+                              minHeight: 6,
+                              backgroundColor: cs.surfaceContainerHighest,
                             ),
                           ),
                           const SizedBox(height: 10),
@@ -199,8 +181,8 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
                       ),
                     ),
                   Text(
-                    'Min. klatek (wszystkie urządzenia): $minFrames',
-                    style: theme.textTheme.bodySmall,
+                    'Minimum klatek (wszystkie urządzenia): $minFrames',
+                    style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
                   ),
                 ],
               ),
@@ -216,15 +198,14 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
                 : () => _captureAndUpload(state),
             icon: _uploading
                 ? const SizedBox(
-                    width: 18,
-                    height: 18,
+                    width: 18, height: 18,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : Icon(kIsWeb ? Icons.upload_file : Icons.camera_alt),
+                : Icon(kIsWeb ? Icons.upload_file_outlined : Icons.camera_alt_outlined),
             label: Text(
               kIsWeb
                   ? 'Wybierz obraz kalibracyjny'
-                  : 'Zrób zdjęcie szachownicy (${myFrames} / 10)',
+                  : 'Zrób zdjęcie szachownicy ($myFrames / 10)',
             ),
           ),
 
@@ -238,34 +219,38 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
                   : null,
               icon: state.isLoading
                   ? const SizedBox(
-                      width: 18,
-                      height: 18,
+                      width: 18, height: 18,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Icon(Icons.calculate),
+                  : const Icon(Icons.calculate_outlined),
               label: Text(
                 canCalibrate
                     ? 'Uruchom kalibrację'
-                    : 'Potrzeba ≥ 3 klatek na urządzenie',
+                    : 'Potrzeba min. 3 klatek na urządzenie',
               ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: canCalibrate ? Colors.green : null,
-                foregroundColor: canCalibrate ? Colors.white : null,
-              ),
+              style: canCalibrate
+                  ? ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.stateDone,
+                      foregroundColor: Colors.white,
+                    )
+                  : null,
             )
           else
-            const Card(
+            Card(
               child: Padding(
-                padding: EdgeInsets.all(12),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 child: Row(
                   children: [
-                    Icon(Icons.info_outline, size: 18),
-                    SizedBox(width: 8),
-                    Text('Kalibrację uruchamia lider sesji'),
+                    Icon(Icons.info_outline, size: 16, color: cs.onSurfaceVariant),
+                    const SizedBox(width: 8),
+                    Text('Kalibrację uruchamia lider sesji',
+                        style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
                   ],
                 ),
               ),
             ),
+
+          const SizedBox(height: 8),
         ],
       ),
     );

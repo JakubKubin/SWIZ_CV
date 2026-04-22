@@ -218,23 +218,23 @@ CALIBRATION_OUTPUT=/app/data/params.json
 
 
 Wdrożenie:
-FAZA 1 — Fundament backendu
+FAZA 1 - Fundament backendu
 ├── docker-compose + .env + config.py
 ├── State machine sesji (Redis)
 ├── WebSocket manager
 └── Endpointy /sessions/*
 
-FAZA 2 — Kalibracja
+FAZA 2 - Kalibracja
 ├── Upload zdjęć szachownicy
 ├── Obliczenia Zhang (OpenCV)
 └── Zapis/odczyt per para MAC
 
-FAZA 3 — Akwizycja
+FAZA 3 - Akwizycja
 ├── Precision Sync (CAPTURE_DELAY_MS)
 ├── Upload zdjęć właściwych
 └── Trigger Celery worker
 
-FAZA 4 — Pipeline 3D
+FAZA 4 - Pipeline 3D
 ├── Rektyfikacja stereo
 ├── Mapa głębi (SGBM + WLS)
 ├── Chmura punktów (Open3D)

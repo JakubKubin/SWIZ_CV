@@ -169,7 +169,7 @@ class SessionStore:
         return session
 
     def get_sync(self, session_id: str) -> Session:
-        """Wersja synchroniczna — do uzycia w watku roboczym (tasks.py)."""
+        """Wersja synchroniczna - do uzycia w watku roboczym (tasks.py)."""
         session = self._sessions.get(session_id)
         if session is None:
             raise KeyError(session_id)
@@ -190,14 +190,14 @@ class SessionStore:
     # --- Stan sesji --------------------------------------------------------
 
     async def set_state(self, session_id: str, state: SessionState) -> None:
-        """Ustawia stan sesji (bez walidacji przejsc — route handler sprawdza)."""
+        """Ustawia stan sesji (bez walidacji przejsc - route handler sprawdza)."""
         async with self._lock:
             session = self._sessions.get(session_id)
             if session:
                 session.state = state
 
     def set_state_sync(self, session_id: str, state: SessionState) -> None:
-        """Wersja synchroniczna — do uzycia w watku roboczym."""
+        """Wersja synchroniczna - do uzycia w watku roboczym."""
         session = self._sessions.get(session_id)
         if session:
             session.state = state

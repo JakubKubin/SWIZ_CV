@@ -77,7 +77,7 @@ ws_manager = WSManager()
 # ===========================================================================
 
 def _sync_calibrate(session_id: str) -> CalibResult:
-    """Synchroniczna kalibracja stereo — uruchamiana w watku roboczym.
+    """Synchroniczna kalibracja stereo - uruchamiana w watku roboczym.
 
     Wczytuje obrazy kalibracyjne z dysku, uruchamia calibrate_stereo()
     i zapisuje wynik do stereo.json.
@@ -120,7 +120,7 @@ def _sync_calibrate(session_id: str) -> CalibResult:
 
 
 async def calibrate_session(session_id: str) -> None:
-    """Async wrapper — uruchamia kalibracje i rozsyla wynik przez WS."""
+    """Async wrapper - uruchamia kalibracje i rozsyla wynik przez WS."""
     try:
         result = await asyncio.to_thread(_sync_calibrate, session_id)
 
@@ -148,7 +148,7 @@ async def calibrate_session(session_id: str) -> None:
 # ===========================================================================
 
 def _sync_measure(session_id: str) -> MeasResult:
-    """Synchroniczny pelny pipeline pomiarowy — uruchamiany w watku roboczym.
+    """Synchroniczny pelny pipeline pomiarowy - uruchamiany w watku roboczym.
 
     Kolejne etapy:
       1. Wczytaj kalibracje i obrazy
@@ -158,7 +158,7 @@ def _sync_measure(session_id: str) -> MeasResult:
     session = store.get_sync(session_id)
 
     if session.calib_result is None:
-        raise ValueError("Brak kalibracji — najpierw wykonaj kalibracje")
+        raise ValueError("Brak kalibracji - najpierw wykonaj kalibracje")
 
     leader = session.leader()
     follower = session.follower()
@@ -225,7 +225,7 @@ def _sync_measure(session_id: str) -> MeasResult:
 
 
 async def measure_session(session_id: str) -> None:
-    """Async wrapper — uruchamia pipeline pomiarowy i rozsyla wynik przez WS."""
+    """Async wrapper - uruchamia pipeline pomiarowy i rozsyla wynik przez WS."""
     try:
         result = await asyncio.to_thread(_sync_measure, session_id)
 

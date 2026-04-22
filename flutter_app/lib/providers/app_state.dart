@@ -1,4 +1,4 @@
-// app_state.dart — główny ChangeNotifier zarządzający stanem aplikacji
+// app_state.dart - główny ChangeNotifier zarządzający stanem aplikacji
 // Obsługuje: sesję, WebSocket, kalibrację, przechwytywanie, pomiar.
 
 import 'dart:async';
@@ -96,7 +96,7 @@ class AppState extends ChangeNotifier {
 
   void clearCaptureTrigger() {
     captureTriggerAt = null;
-    // Nie wywołujemy notifyListeners — caller zrobi to sam po starcie countdown.
+    // Nie wywołujemy notifyListeners - caller zrobi to sam po starcie countdown.
   }
 
   // -------------------------------------------------------------------------
@@ -201,7 +201,7 @@ class AppState extends ChangeNotifier {
         },
       );
 
-      // Ping startowy — pomiar offsetu czasu serwera
+      // Ping startowy - pomiar offsetu czasu serwera
       Future.delayed(const Duration(milliseconds: 400), () {
         _ws?.sink.add(jsonEncode({'action': 'ping'}));
       });
@@ -227,23 +227,23 @@ class AppState extends ChangeNotifier {
         break;
 
       case 'device_joined':
-        _setInfo('📱 ${msg['device_id']} dołączył do sesji');
+        _setInfo('Urządzenie ${msg['device_id']} dołączyło do sesji');
         refreshSession();
         break;
 
       case 'calibration_done':
         final err = (msg['reproj_error'] as num?)?.toStringAsFixed(3) ?? '?';
-        _setInfo('✅ Kalibracja zakończona! Błąd reprojekcji: $err px');
+        _setInfo('Kalibracja zakończona - błąd reprojekcji: $err px');
         refreshSession();
         break;
 
       case 'capture_trigger':
         captureTriggerAt = (msg['at'] as num?)?.toDouble();
-        notifyListeners(); // Ekran Capture nasłuchuje tej zmiany
+        notifyListeners();
         break;
 
       case 'device_captured':
-        _setInfo('📸 ${msg['device_id']} wykonał zdjęcie');
+        _setInfo('Urządzenie ${msg['device_id']} wykonało zdjęcie');
         refreshSession();
         break;
 
@@ -251,7 +251,7 @@ class AppState extends ChangeNotifier {
         final w = (msg['width_mm'] as num?)?.toStringAsFixed(0) ?? '?';
         final l = (msg['length_mm'] as num?)?.toStringAsFixed(0) ?? '?';
         final h = (msg['height_mm'] as num?)?.toStringAsFixed(0) ?? '?';
-        _setInfo('📐 Pomiar gotowy: $w × $l × $h mm');
+        _setInfo('Pomiar zakończony: $w × $l × $h mm');
         refreshSession();
         _fetchMeasurement();
         break;
@@ -296,7 +296,7 @@ class AppState extends ChangeNotifier {
     _setLoading(true);
     try {
       await _api.computeCalibration(sessionId!);
-      _setInfo('Kalibracja uruchomiona w tle — czekaj na wynik...');
+      _setInfo('Kalibracja uruchomiona w tle - czekaj na wynik...');
     } catch (e) {
       _setError(e.toString());
     }
@@ -321,7 +321,7 @@ class AppState extends ChangeNotifier {
     if (sessionId == null || deviceId.isEmpty) return false;
     try {
       await _api.uploadCaptureImage(sessionId!, deviceId, bytes);
-      // Powiadom serwer (inne urządzenia) — at w czasie serwera
+      // Powiadom serwer (inne urządzenia) - at w czasie serwera
       _ws?.sink.add(jsonEncode({
         'action': 'captured',
         'at': DateTime.now().millisecondsSinceEpoch / 1000.0 + serverTimeOffset,
@@ -339,7 +339,7 @@ class AppState extends ChangeNotifier {
     _setLoading(true);
     try {
       await _api.runMeasurement(sessionId!);
-      _setInfo('Pipeline pomiaru uruchomiony — czekaj na wynik...');
+      _setInfo('Pipeline pomiaru uruchomiony - czekaj na wynik...');
     } catch (e) {
       _setError(e.toString());
     }

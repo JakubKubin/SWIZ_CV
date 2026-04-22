@@ -1,4 +1,4 @@
-// models.dart — wszystkie modele danych aplikacji
+// models.dart - wszystkie modele danych aplikacji
 
 // ---------------------------------------------------------------------------
 // Sesja
