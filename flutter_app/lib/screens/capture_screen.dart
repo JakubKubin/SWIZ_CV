@@ -52,11 +52,16 @@ class _CaptureScreenState extends State<CaptureScreen> {
   void _startCountdown() {
     _countdownTimer?.cancel();
     final triggerAt = _appState.captureTriggerAt!;
+    // Capture the offset at the moment the trigger arrives.
+    // serverTimeOffset = server_clock - local_clock, so:
+    //   remaining = triggerAt(server) - server_now
+    //             = triggerAt - (local_now + serverTimeOffset)
+    final offset = _appState.serverTimeOffset;
     _appState.clearCaptureTrigger();
 
     _countdownTimer = Timer.periodic(const Duration(milliseconds: 50), (t) {
       final now = DateTime.now().millisecondsSinceEpoch / 1000.0;
-      final remaining = ((triggerAt - now) * 1000).round();
+      final remaining = ((triggerAt - now - offset) * 1000).round();
       if (remaining <= 0) {
         t.cancel();
         setState(() => _remainingMs = 0);

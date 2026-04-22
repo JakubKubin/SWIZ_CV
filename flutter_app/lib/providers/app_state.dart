@@ -321,10 +321,10 @@ class AppState extends ChangeNotifier {
     if (sessionId == null || deviceId.isEmpty) return false;
     try {
       await _api.uploadCaptureImage(sessionId!, deviceId, bytes);
-      // Powiadom serwer (inne urządzenia) przez WS
+      // Powiadom serwer (inne urządzenia) — at w czasie serwera
       _ws?.sink.add(jsonEncode({
         'action': 'captured',
-        'at': DateTime.now().millisecondsSinceEpoch / 1000.0,
+        'at': DateTime.now().millisecondsSinceEpoch / 1000.0 + serverTimeOffset,
       }));
       await refreshSession();
       return true;
