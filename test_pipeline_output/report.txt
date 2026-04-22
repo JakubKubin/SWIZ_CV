@@ -1,0 +1,10 @@
+Tryb: synthetic
+Blad reproj.: 0.0000 px
+|T| = 120.0 mm
+
+n_pikseli: 94516
+mae_mm: 610.6196899414062
+medae_mm: 443.9462890625
+rmse_mm: 831.8173828125
+blad_wzgledny_pct: 24.266326904296875
+pokrycie_pct: 30.766927083333336

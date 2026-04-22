@@ -3,3 +3,8 @@ opencv-python==4.13.0.92
 pluggy==1.6.0
 Pygments==2.20.0
 pytest==9.0.3
+
+# Backend FastAPI
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.9

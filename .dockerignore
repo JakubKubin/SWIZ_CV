@@ -1,0 +1,29 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Test artefakty
+test_output/
+test_pipeline_output/
+calib_images/
+
+# Dane sesji (montowane jako wolumin)
+data/
+
+# Flutter (nie wchodzi do Dockera)
+flutter_app/
+
+# Git i edytor
+.git/
+.gitignore
+*.md
+LICENSE
+
+# Środowisko lokalne
+.env
+*.egg-info/
+.venv/
+venv/

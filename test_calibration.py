@@ -15,7 +15,7 @@ import numpy as np
 import cv2
 import pytest
 
-# Wyniki wizualne laduja tutaj – sprawdz je rcznie po uruchomieniu testow.
+# Wyniki wizualne
 TEST_OUTPUT_DIR = Path(__file__).parent / "test_output"
 
 os.environ["CHECKERBOARD_ROWS"] = "7"
@@ -69,7 +69,7 @@ def _generate_checkerboard_images(
 
     x_shift_px: poziome przesuniecie planszy [px]. Uzywaj tego samego seeda
         dla lewej (x_shift_px=0) i prawej (x_shift_px=-BASELINE_PX), dzieki
-        czemu obie kamery maja identyczna losowa pose - roznica to tylko shift.
+        czemu obie kamery maja identyczna losowa poze - roznica to tylko shift.
     """
     flat = _make_flat_checkerboard(rows, cols, sq_px=60)
     h_flat, w_flat = flat.shape[:2]
@@ -296,7 +296,7 @@ def distorted_calib_data():
         [  0.0, 800.0, IMG_H / 2.0],
         [  0.0,   0.0,         1.0],
     ], dtype=np.float64)
-    dist_true = np.array([0.15, -0.08, 0.0, 0.0, 0.0], dtype=np.float64)
+    dist_true = np.array([0.2, -0.1, 0.0, 0.0, 0.0], dtype=np.float64)
     data = _make_projectpoints_calib_data(
         K, dist_true, cal.BOARD_ROWS, cal.BOARD_COLS, cal.SQUARE_SIZE,
         num_views=15, img_size=(IMG_W, IMG_H), rng=np.random.RandomState(99),
@@ -475,7 +475,7 @@ class TestUndistortAndRectify:
         map1L, map2L, map1R, map2R = sp.rectify_maps()
         assert map1L.shape[:2] == (IMG_H, IMG_W)
         assert map1R.shape[:2] == (IMG_H, IMG_W)
-        # Rektyfikacja pierwszej pary + linie epipolarne – po rektyfikacji
+        # Rektyfikacja pierwszej pary + linie epipolarne - po rektyfikacji
         # odpowiadajace sobie punkty powinny lezec na tej samej linii poziomej.
         l_img = cv2.imread(lpaths[0])
         r_img = cv2.imread(rpaths[0])

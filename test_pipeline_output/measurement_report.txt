@@ -1,0 +1,21 @@
+
+============================================================
+  RAPORT POMIARU OBIEKTU NA EUROPALECIE
+============================================================
+  Data/czas: 2026-04-22 22:33:31
+
+--- Detekcja plaszczyzny palety ---
+  RMS residual:       4.72 mm
+  Inliery RANSAC:     19854
+  Pokrycie palety:    84.6 %
+
+--- Wymiary obiektu (bounding box 3D) ---
+  Szerokosc (X):    877.4 mm
+  Dlugosc   (Y):    588.9 mm
+  Wysokosc  (Z):     55.9 mm
+  Liczba pkt.:   19429
+
+--- Walidacja ---
+  Status: PASS
+  Brak problemow - pomiar prawidlowy
+============================================================
