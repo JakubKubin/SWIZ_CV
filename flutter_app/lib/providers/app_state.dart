@@ -53,6 +53,9 @@ class AppState extends ChangeNotifier {
   /// Offset: czas serwera − czas lokalny (sekundy). Do synchronizacji przechwycenia.
   double serverTimeOffset = 0.0;
 
+  /// true gdy WebSocket jest aktywny i odebrał co najmniej jeden pong.
+  bool wsConnected = false;
+
   /// Timestamp (Unix sek.) kiedy urządzenie powinno zrobić zdjęcie.
   double? captureTriggerAt;
 
@@ -101,7 +104,6 @@ class AppState extends ChangeNotifier {
   // -------------------------------------------------------------------------
 
   Future<bool> testConnection() async {
-    _api; // ignore — just create for side effects
     return ApiService(serverUrl).healthCheck();
   }
 
@@ -188,8 +190,12 @@ class AppState extends ChangeNotifier {
             _handleWsMsg(jsonDecode(raw as String) as Map<String, dynamic>);
           } catch (_) {}
         },
-        onError: (Object e) => _setError('WebSocket: $e'),
+        onError: (Object e) {
+          wsConnected = false;
+          _setError('WebSocket: $e');
+        },
         onDone: () {
+          wsConnected = false;
           _setInfo('WebSocket rozłączony');
           notifyListeners();
         },
@@ -214,10 +220,10 @@ class AppState extends ChangeNotifier {
 
     switch (event) {
       case 'pong':
-        // Oblicz offset: server_time − local_time
         final st = (msg['t'] as num?)?.toDouble() ?? 0.0;
         serverTimeOffset =
             st - DateTime.now().millisecondsSinceEpoch / 1000.0;
+        wsConnected = true;
         break;
 
       case 'device_joined':
@@ -383,6 +389,8 @@ class AppState extends ChangeNotifier {
     session = null;
     measurement = null;
     captureTriggerAt = null;
+    wsConnected = false;
+    serverTimeOffset = 0.0;
     wsLog.clear();
     notifyListeners();
   }

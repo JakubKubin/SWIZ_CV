@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -42,7 +40,7 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
 
     setState(() => _uploading = true);
     final bytes = await xfile.readAsBytes();
-    final ok = await state.uploadCalibImage(Uint8List.fromList(bytes));
+    final ok = await state.uploadCalibImage(bytes);
     if (mounted) {
       setState(() => _uploading = false);
       if (ok) {

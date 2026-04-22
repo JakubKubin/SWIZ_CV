@@ -279,7 +279,7 @@ class _DimCard extends StatelessWidget {
             Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
             const SizedBox(height: 6),
             Text(
-              '${valueMm.toStringAsFixed(0)}',
+              valueMm.toStringAsFixed(0),
               style: TextStyle(
                 fontSize: 28,
                 fontWeight: FontWeight.bold,

@@ -3,46 +3,47 @@ import 'package:provider/provider.dart';
 
 import '../models/models.dart';
 import '../providers/app_state.dart';
+import '../widgets/app_banner.dart';
 import 'calibration_screen.dart';
 import 'capture_screen.dart';
 import 'results_screen.dart';
 
+Color _stateColor(String state, ColorScheme cs) {
+  switch (state) {
+    case 'IDLE':
+      return Colors.grey;
+    case 'CALIBRATING':
+      return Colors.orange;
+    case 'READY':
+      return cs.primary;
+    case 'PROCESSING':
+      return Colors.purple;
+    case 'DONE':
+      return Colors.green;
+    default:
+      return Colors.grey;
+  }
+}
+
+String _stateLabel(String state) {
+  switch (state) {
+    case 'IDLE':
+      return 'Oczekiwanie';
+    case 'CALIBRATING':
+      return 'Kalibracja';
+    case 'READY':
+      return 'Gotowa';
+    case 'PROCESSING':
+      return 'Przetwarzanie';
+    case 'DONE':
+      return 'Zakończona';
+    default:
+      return state;
+  }
+}
+
 class SessionScreen extends StatelessWidget {
   const SessionScreen({super.key});
-
-  Color _stateColor(String state, ColorScheme cs) {
-    switch (state) {
-      case 'IDLE':
-        return Colors.grey;
-      case 'CALIBRATING':
-        return Colors.orange;
-      case 'READY':
-        return cs.primary;
-      case 'PROCESSING':
-        return Colors.purple;
-      case 'DONE':
-        return Colors.green;
-      default:
-        return Colors.grey;
-    }
-  }
-
-  String _stateLabel(String state) {
-    switch (state) {
-      case 'IDLE':
-        return 'Oczekiwanie';
-      case 'CALIBRATING':
-        return 'Kalibracja';
-      case 'READY':
-        return 'Gotowa';
-      case 'PROCESSING':
-        return 'Przetwarzanie';
-      case 'DONE':
-        return 'Zakończona';
-      default:
-        return state;
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -96,7 +97,7 @@ class _SessionBody extends StatelessWidget {
       children: [
         // Error / info banners
         if (appState.error != null)
-          _Banner(
+          AppBanner(
             color: theme.colorScheme.errorContainer,
             textColor: theme.colorScheme.onErrorContainer,
             icon: Icons.error_outline,
@@ -104,7 +105,7 @@ class _SessionBody extends StatelessWidget {
             onClose: appState.clearError,
           ),
         if (appState.info != null)
-          _Banner(
+          AppBanner(
             color: theme.colorScheme.primaryContainer,
             textColor: theme.colorScheme.onPrimaryContainer,
             icon: Icons.info_outline,
@@ -141,11 +142,11 @@ class _SessionBody extends StatelessWidget {
             Icon(
               Icons.wifi,
               size: 16,
-              color: appState.serverTimeOffset != 0.0 ? Colors.green : Colors.grey,
+              color: appState.wsConnected ? Colors.green : Colors.grey,
             ),
             const SizedBox(width: 4),
             Text(
-              appState.serverTimeOffset != 0.0
+              appState.wsConnected
                   ? 'WebSocket połączony (offset: ${appState.serverTimeOffset.toStringAsFixed(3)} s)'
                   : 'WebSocket rozłączony',
               style: theme.textTheme.bodySmall,
@@ -171,7 +172,6 @@ class _SessionBody extends StatelessWidget {
         Text('Akcje', style: theme.textTheme.titleSmall),
         const SizedBox(height: 8),
 
-        // Calibration
         _ActionButton(
           label: 'Kalibracja',
           icon: Icons.camera_enhance,
@@ -183,7 +183,6 @@ class _SessionBody extends StatelessWidget {
         ),
         const SizedBox(height: 8),
 
-        // Capture
         _ActionButton(
           label: 'Przechwycenie',
           icon: Icons.photo_camera,
@@ -195,7 +194,6 @@ class _SessionBody extends StatelessWidget {
         ),
         const SizedBox(height: 8),
 
-        // Results
         _ActionButton(
           label: 'Wyniki',
           icon: Icons.analytics,
@@ -234,40 +232,6 @@ class _SessionBody extends StatelessWidget {
       ],
     );
   }
-
-  Color _stateColor(String state, ColorScheme cs) {
-    switch (state) {
-      case 'IDLE':
-        return Colors.grey;
-      case 'CALIBRATING':
-        return Colors.orange;
-      case 'READY':
-        return cs.primary;
-      case 'PROCESSING':
-        return Colors.purple;
-      case 'DONE':
-        return Colors.green;
-      default:
-        return Colors.grey;
-    }
-  }
-
-  String _stateLabel(String state) {
-    switch (state) {
-      case 'IDLE':
-        return 'Oczekiwanie';
-      case 'CALIBRATING':
-        return 'Kalibracja';
-      case 'READY':
-        return 'Gotowa';
-      case 'PROCESSING':
-        return 'Przetwarzanie';
-      case 'DONE':
-        return 'Zakończona';
-      default:
-        return state;
-    }
-  }
 }
 
 class _DeviceCard extends StatelessWidget {
@@ -290,14 +254,12 @@ class _DeviceCard extends StatelessWidget {
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // WS connected
             Icon(
               Icons.wifi,
               size: 16,
               color: device.wsConnected ? Colors.green : Colors.grey,
             ),
             const SizedBox(width: 8),
-            // Frame counts
             Column(
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.end,
@@ -334,46 +296,6 @@ class _ActionButton extends StatelessWidget {
       onPressed: enabled ? onTap : null,
       icon: Icon(icon),
       label: Text(label),
-    );
-  }
-}
-
-class _Banner extends StatelessWidget {
-  final Color color;
-  final Color textColor;
-  final IconData icon;
-  final String message;
-  final VoidCallback onClose;
-
-  const _Banner({
-    required this.color,
-    required this.textColor,
-    required this.icon,
-    required this.message,
-    required this.onClose,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      color: color,
-      margin: const EdgeInsets.only(bottom: 8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Row(
-          children: [
-            Icon(icon, color: textColor, size: 20),
-            const SizedBox(width: 8),
-            Expanded(child: Text(message, style: TextStyle(color: textColor))),
-            IconButton(
-              icon: Icon(Icons.close, color: textColor, size: 18),
-              onPressed: onClose,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

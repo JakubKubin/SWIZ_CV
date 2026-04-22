@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -7,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/app_state.dart';
+import '../widgets/app_banner.dart';
 
 class CaptureScreen extends StatefulWidget {
   const CaptureScreen({super.key});
@@ -17,6 +17,7 @@ class CaptureScreen extends StatefulWidget {
 
 class _CaptureScreenState extends State<CaptureScreen> {
   final _picker = ImagePicker();
+  late final AppState _appState;
   bool _uploading = false;
   Timer? _countdownTimer;
   int _remainingMs = 0;
@@ -24,35 +25,34 @@ class _CaptureScreenState extends State<CaptureScreen> {
   @override
   void initState() {
     super.initState();
-    final appState = context.read<AppState>();
-    appState.addListener(_onStateChange);
-    _checkExistingTrigger(appState);
+    _appState = context.read<AppState>();
+    _appState.addListener(_onStateChange);
+    _checkExistingTrigger();
   }
 
   @override
   void dispose() {
-    context.read<AppState>().removeListener(_onStateChange);
+    _appState.removeListener(_onStateChange);
     _countdownTimer?.cancel();
     super.dispose();
   }
 
   void _onStateChange() {
-    final appState = context.read<AppState>();
-    if (appState.captureTriggerAt != null) {
-      _startCountdown(appState);
+    if (_appState.captureTriggerAt != null) {
+      _startCountdown();
     }
   }
 
-  void _checkExistingTrigger(AppState appState) {
-    if (appState.captureTriggerAt != null) {
-      _startCountdown(appState);
+  void _checkExistingTrigger() {
+    if (_appState.captureTriggerAt != null) {
+      _startCountdown();
     }
   }
 
-  void _startCountdown(AppState appState) {
+  void _startCountdown() {
     _countdownTimer?.cancel();
-    final triggerAt = appState.captureTriggerAt!;
-    appState.clearCaptureTrigger();
+    final triggerAt = _appState.captureTriggerAt!;
+    _appState.clearCaptureTrigger();
 
     _countdownTimer = Timer.periodic(const Duration(milliseconds: 50), (t) {
       final now = DateTime.now().millisecondsSinceEpoch / 1000.0;
@@ -60,19 +60,18 @@ class _CaptureScreenState extends State<CaptureScreen> {
       if (remaining <= 0) {
         t.cancel();
         setState(() => _remainingMs = 0);
-        // Auto-launch camera after countdown
-        _captureAndUpload(context.read<AppState>());
+        _captureAndUpload();
       } else {
         setState(() => _remainingMs = remaining);
       }
     });
   }
 
-  Future<void> _triggerCapture(AppState state) async {
-    await state.triggerCapture(delayMs: 3000);
+  Future<void> _triggerCapture() async {
+    await _appState.triggerCapture(delayMs: 3000);
   }
 
-  Future<void> _captureAndUpload(AppState state) async {
+  Future<void> _captureAndUpload() async {
     XFile? xfile;
     try {
       if (kIsWeb) {
@@ -95,7 +94,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
 
     setState(() => _uploading = true);
     final bytes = await xfile.readAsBytes();
-    final ok = await state.uploadCaptureImage(Uint8List.fromList(bytes));
+    final ok = await _appState.uploadCaptureImage(bytes);
     if (mounted) {
       setState(() => _uploading = false);
       if (ok) {
@@ -109,9 +108,9 @@ class _CaptureScreenState extends State<CaptureScreen> {
     }
   }
 
-  Future<void> _startMeasurement(AppState state) async {
-    await state.startMeasurement();
-    if (mounted && state.error == null) {
+  Future<void> _startMeasurement() async {
+    await _appState.startMeasurement();
+    if (mounted && _appState.error == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Pipeline pomiaru uruchomiony — czekaj na wynik')),
       );
@@ -146,9 +145,8 @@ class _CaptureScreenState extends State<CaptureScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // Error / info banners
           if (state.error != null)
-            _Banner(
+            AppBanner(
               color: theme.colorScheme.errorContainer,
               textColor: theme.colorScheme.onErrorContainer,
               icon: Icons.error_outline,
@@ -156,7 +154,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
               onClose: state.clearError,
             ),
           if (state.info != null)
-            _Banner(
+            AppBanner(
               color: theme.colorScheme.primaryContainer,
               textColor: theme.colorScheme.onPrimaryContainer,
               icon: Icons.info_outline,
@@ -226,7 +224,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
             // Trigger (leader only)
             if (state.isLeader)
               ElevatedButton.icon(
-                onPressed: state.isLoading ? null : () => _triggerCapture(state),
+                onPressed: state.isLoading ? null : _triggerCapture,
                 icon: const Icon(Icons.flash_on),
                 label: const Text('Wyzwól przechwycenie (3 s odliczanie)'),
                 style: ElevatedButton.styleFrom(
@@ -252,9 +250,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
 
             // Manual capture/upload button
             ElevatedButton.icon(
-              onPressed: (_uploading || state.isLoading)
-                  ? null
-                  : () => _captureAndUpload(state),
+              onPressed: (_uploading || state.isLoading) ? null : _captureAndUpload,
               icon: _uploading
                   ? const SizedBox(
                       width: 18,
@@ -272,9 +268,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
             // Start measurement (leader, when all captured)
             if (state.isLeader)
               ElevatedButton.icon(
-                onPressed: (allCaptured && !state.isLoading)
-                    ? () => _startMeasurement(state)
-                    : null,
+                onPressed: (allCaptured && !state.isLoading) ? _startMeasurement : null,
                 icon: state.isLoading
                     ? const SizedBox(
                         width: 18,
@@ -294,46 +288,6 @@ class _CaptureScreenState extends State<CaptureScreen> {
               ),
           ],
         ],
-      ),
-    );
-  }
-}
-
-class _Banner extends StatelessWidget {
-  final Color color;
-  final Color textColor;
-  final IconData icon;
-  final String message;
-  final VoidCallback onClose;
-
-  const _Banner({
-    required this.color,
-    required this.textColor,
-    required this.icon,
-    required this.message,
-    required this.onClose,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      color: color,
-      margin: const EdgeInsets.only(bottom: 8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Row(
-          children: [
-            Icon(icon, color: textColor, size: 20),
-            const SizedBox(width: 8),
-            Expanded(child: Text(message, style: TextStyle(color: textColor))),
-            IconButton(
-              icon: Icon(Icons.close, color: textColor, size: 18),
-              onPressed: onClose,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
-            ),
-          ],
-        ),
       ),
     );
   }
