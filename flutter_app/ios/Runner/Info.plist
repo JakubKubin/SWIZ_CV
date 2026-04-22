@@ -66,5 +66,36 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+
+	<!-- ── Uprawnienia aparatu i biblioteki zdjęć (image_picker) ─────────── -->
+	<key>NSCameraUsageDescription</key>
+	<string>Aparat jest wymagany do wykonania zdjęć kalibracyjnych i pomiarowych szachownicy.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Biblioteka zdjęć używana do wyboru obrazów kalibracyjnych (tryb web/galeria).</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Aplikacja może zapisywać zdjęcia pomiarowe do biblioteki.</string>
+
+	<!-- ── Sieć lokalna (iOS 14+) ─────────────────────────────────────────── -->
+	<!-- Wymagane do wyświetlenia systemowego promptu "Zezwól na dostęp do urządzeń -->
+	<!-- w sieci lokalnej". Dotyczy połączeń z serwerem po adresie IP (192.168.x.x). -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Aplikacja łączy się z serwerem pomiarowym StereoVision w sieci lokalnej (LAN/WiFi).</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_http._tcp</string>
+		<string>_ws._tcp</string>
+	</array>
+
+	<!-- ── App Transport Security ─────────────────────────────────────────── -->
+	<!-- Serwer działa na HTTP (port 8000) bez TLS. NSAllowsArbitraryLoads   -->
+	<!-- umożliwia połączenia HTTP z lokalnymi adresami IP (192.168.x.x).    -->
+	<!-- Aplikacja nie wysyła danych wrażliwych poza sieć lokalną.            -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 </dict>
 </plist>

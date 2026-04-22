@@ -1,0 +1,51 @@
+# iOS 13.0 minimum — Flutter + web_socket_channel + image_picker wszystkie go wymagają.
+platform :ios, '13.0'
+
+# Wyłącz statystyki CocoaPods (przyspiesza build).
+ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+
+project 'Runner', {
+  'Debug'   => :debug,
+  'Profile' => :release,
+  'Release' => :release,
+}
+
+def flutter_root
+  generated = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
+  unless File.exist?(generated)
+    raise "#{generated} nie istnieje. Uruchom najpierw: flutter pub get"
+  end
+  File.foreach(generated) do |line|
+    m = line.match(/FLUTTER_ROOT=(.*)/)
+    return m[1].strip if m
+  end
+  raise "FLUTTER_ROOT nie znaleziony w #{generated}. Usuń Generated.xcconfig i uruchom flutter pub get"
+end
+
+require File.expand_path(
+  File.join('packages', 'flutter_tools', 'bin', 'podhelper'),
+  flutter_root,
+)
+
+flutter_ios_podfile_setup
+
+target 'Runner' do
+  use_frameworks!
+  use_modular_headers!
+
+  flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+
+  target 'RunnerTests' do
+    inherit! :search_paths
+  end
+end
+
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    flutter_additional_ios_build_settings(target)
+    # Wymuś minimalny deployment target na wszystkich podach (zapobiega ostrzeżeniom).
+    target.build_configurations.each do |config|
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
+    end
+  end
+end
