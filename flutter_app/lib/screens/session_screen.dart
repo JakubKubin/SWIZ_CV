@@ -14,8 +14,8 @@ class SessionScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final state   = context.watch<AppState>();
-    final theme   = Theme.of(context);
+    final state = context.watch<AppState>();
+    final theme = Theme.of(context);
     final session = state.session;
 
     return Scaffold(
@@ -48,8 +48,8 @@ class SessionScreen extends StatelessWidget {
 
 class _SessionBody extends StatelessWidget {
   final SessionData session;
-  final AppState    appState;
-  final ThemeData   theme;
+  final AppState appState;
+  final ThemeData theme;
 
   const _SessionBody({
     required this.session,
@@ -59,8 +59,8 @@ class _SessionBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs    = theme.colorScheme;
-    final tt    = theme.textTheme;
+    final cs = theme.colorScheme;
+    final tt = theme.textTheme;
     final color = stateColor(session.state, cs);
 
     return ListView(
@@ -92,12 +92,13 @@ class _SessionBody extends StatelessWidget {
                 Container(
                   width: 8,
                   height: 8,
-                  decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+                  decoration:
+                      BoxDecoration(color: color, shape: BoxShape.circle),
                 ),
                 const SizedBox(width: 10),
                 Text(stateLabel(session.state),
-                    style: tt.titleSmall?.copyWith(
-                        color: color, fontWeight: FontWeight.w600)),
+                    style: tt.titleSmall
+                        ?.copyWith(color: color, fontWeight: FontWeight.w600)),
                 const Spacer(),
                 Text('ID: ${session.sessionId.substring(0, 8)}…',
                     style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
@@ -113,8 +114,8 @@ class _SessionBody extends StatelessWidget {
 
         // Devices
         Text('Urządzenia (${session.devices.length})',
-            style: tt.labelMedium?.copyWith(
-                color: cs.onSurfaceVariant, letterSpacing: 0.3)),
+            style: tt.labelMedium
+                ?.copyWith(color: cs.onSurfaceVariant, letterSpacing: 0.3)),
         const SizedBox(height: 6),
         ...session.devices.map((d) => _DeviceCard(device: d, cs: cs, tt: tt)),
 
@@ -122,8 +123,8 @@ class _SessionBody extends StatelessWidget {
 
         // Actions
         Text('Nawigacja',
-            style: tt.labelMedium?.copyWith(
-                color: cs.onSurfaceVariant, letterSpacing: 0.3)),
+            style: tt.labelMedium
+                ?.copyWith(color: cs.onSurfaceVariant, letterSpacing: 0.3)),
         const SizedBox(height: 8),
 
         _NavTile(
@@ -131,24 +132,24 @@ class _SessionBody extends StatelessWidget {
           label: 'Kalibracja',
           subtitle: 'Zdjęcia szachownicy i obliczenia stereo',
           enabled: session.isIdle || session.isCalibrating || session.isReady,
-          onTap: () => Navigator.push(
-              context, MaterialPageRoute(builder: (_) => const CalibrationScreen())),
+          onTap: () => Navigator.push(context,
+              MaterialPageRoute(builder: (_) => const CalibrationScreen())),
         ),
         _NavTile(
           icon: Icons.camera_outlined,
           label: 'Przechwycenie',
           subtitle: 'Synchroniczne zdjęcie pomiarowe',
           enabled: session.isReady || session.isProcessing || session.isDone,
-          onTap: () => Navigator.push(
-              context, MaterialPageRoute(builder: (_) => const CaptureScreen())),
+          onTap: () => Navigator.push(context,
+              MaterialPageRoute(builder: (_) => const CaptureScreen())),
         ),
         _NavTile(
           icon: Icons.bar_chart_outlined,
           label: 'Wyniki',
           subtitle: 'Wymiary i raport pomiaru',
           enabled: session.isDone || appState.measurement != null,
-          onTap: () => Navigator.push(
-              context, MaterialPageRoute(builder: (_) => const ResultsScreen())),
+          onTap: () => Navigator.push(context,
+              MaterialPageRoute(builder: (_) => const ResultsScreen())),
         ),
 
         const SizedBox(height: 20),
@@ -162,7 +163,8 @@ class _SessionBody extends StatelessWidget {
             Container(
               decoration: BoxDecoration(
                 color: cs.surfaceContainerLowest,
-                border: Border.all(color: cs.outlineVariant.withOpacity(0.5)),
+                border:
+                    Border.all(color: cs.outlineVariant.withValues(alpha: 0.5)),
                 borderRadius: BorderRadius.circular(8),
               ),
               padding: const EdgeInsets.all(10),
@@ -170,13 +172,17 @@ class _SessionBody extends StatelessWidget {
                   ? Text('Brak zdarzeń', style: tt.bodySmall)
                   : Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
-                      children: appState.wsLog.reversed.take(15).map((e) => Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 1),
-                        child: Text(e.toString(),
-                            style: tt.bodySmall?.copyWith(
-                                fontFamily: 'monospace',
-                                color: cs.onSurfaceVariant)),
-                      )).toList(),
+                      children: appState.wsLog.reversed
+                          .take(15)
+                          .map((e) => Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 1),
+                                child: Text(e.toString(),
+                                    style: tt.bodySmall?.copyWith(
+                                        fontFamily: 'monospace',
+                                        color: cs.onSurfaceVariant)),
+                              ))
+                          .toList(),
                     ),
             ),
           ],
@@ -188,9 +194,9 @@ class _SessionBody extends StatelessWidget {
 }
 
 class _WsStatusRow extends StatelessWidget {
-  final AppState      appState;
-  final ColorScheme   cs;
-  final TextTheme     tt;
+  final AppState appState;
+  final ColorScheme cs;
+  final TextTheme tt;
 
   const _WsStatusRow({
     required this.appState,
@@ -204,7 +210,8 @@ class _WsStatusRow extends StatelessWidget {
     return Row(
       children: [
         Container(
-          width: 6, height: 6,
+          width: 6,
+          height: 6,
           decoration: BoxDecoration(
             color: connected ? AppColors.success : cs.outline,
             shape: BoxShape.circle,
@@ -228,9 +235,9 @@ class _WsStatusRow extends StatelessWidget {
 }
 
 class _DeviceCard extends StatelessWidget {
-  final DeviceInfo  device;
+  final DeviceInfo device;
   final ColorScheme cs;
-  final TextTheme   tt;
+  final TextTheme tt;
 
   const _DeviceCard({required this.device, required this.cs, required this.tt});
 
@@ -240,15 +247,18 @@ class _DeviceCard extends StatelessWidget {
       margin: const EdgeInsets.symmetric(vertical: 4),
       child: ListTile(
         leading: Container(
-          width: 36, height: 36,
+          width: 36,
+          height: 36,
           decoration: BoxDecoration(
             color: device.isLeader
-                ? AppColors.stateReady.withOpacity(0.12)
+                ? AppColors.stateReady.withValues(alpha: 0.12)
                 : cs.surfaceContainerHighest,
             shape: BoxShape.circle,
           ),
           child: Icon(
-            device.isLeader ? Icons.account_circle_outlined : Icons.smartphone_outlined,
+            device.isLeader
+                ? Icons.account_circle_outlined
+                : Icons.smartphone_outlined,
             size: 20,
             color: device.isLeader ? AppColors.stateReady : cs.onSurfaceVariant,
           ),
@@ -260,7 +270,8 @@ class _DeviceCard extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 6, height: 6,
+              width: 6,
+              height: 6,
               decoration: BoxDecoration(
                 color: device.wsConnected ? AppColors.success : cs.outline,
                 shape: BoxShape.circle,
@@ -286,9 +297,9 @@ class _DeviceCard extends StatelessWidget {
 
 class _NavTile extends StatelessWidget {
   final IconData icon;
-  final String   label;
-  final String   subtitle;
-  final bool     enabled;
+  final String label;
+  final String subtitle;
+  final bool enabled;
   final VoidCallback onTap;
 
   const _NavTile({
@@ -307,15 +318,16 @@ class _NavTile extends StatelessWidget {
       margin: const EdgeInsets.symmetric(vertical: 4),
       child: ListTile(
         leading: Container(
-          width: 36, height: 36,
+          width: 36,
+          height: 36,
           decoration: BoxDecoration(
             color: enabled
-                ? cs.primaryContainer.withOpacity(0.6)
+                ? cs.primaryContainer.withValues(alpha: 0.6)
                 : cs.surfaceContainerHighest,
             shape: BoxShape.circle,
           ),
-          child: Icon(icon, size: 18,
-              color: enabled ? cs.primary : cs.onSurfaceVariant),
+          child: Icon(icon,
+              size: 18, color: enabled ? cs.primary : cs.onSurfaceVariant),
         ),
         title: Text(label,
             style: tt.bodyMedium?.copyWith(

@@ -89,7 +89,8 @@ class _EmptyState extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.analytics_outlined, size: 56, color: cs.onSurfaceVariant),
+            Icon(Icons.analytics_outlined,
+                size: 56, color: cs.onSurfaceVariant),
             const SizedBox(height: 16),
             Text('Brak wyników',
                 style: tt.titleMedium?.copyWith(color: cs.onSurfaceVariant)),
@@ -122,8 +123,8 @@ class _EmptyState extends StatelessWidget {
 
 class _ResultsBody extends StatelessWidget {
   final MeasurementResult result;
-  final ThemeData         theme;
-  final VoidCallback      onShowReport;
+  final ThemeData theme;
+  final VoidCallback onShowReport;
 
   const _ResultsBody({
     required this.result,
@@ -133,8 +134,8 @@ class _ResultsBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs     = theme.colorScheme;
-    final tt     = theme.textTheme;
+    final cs = theme.colorScheme;
+    final tt = theme.textTheme;
     final passed = result.validationPassed;
 
     return ListView(
@@ -160,7 +161,9 @@ class _ResultsBody extends StatelessWidget {
                       passed ? 'Pomiar zaliczony' : 'Pomiar niezaliczony',
                       style: tt.titleSmall?.copyWith(
                         fontWeight: FontWeight.w600,
-                        color: passed ? cs.onPrimaryContainer : cs.onErrorContainer,
+                        color: passed
+                            ? cs.onPrimaryContainer
+                            : cs.onErrorContainer,
                       ),
                     ),
                     if (!passed && result.issues.isNotEmpty)
@@ -182,8 +185,8 @@ class _ResultsBody extends StatelessWidget {
 
         // Dimension cards
         Text('Wymiary obiektu',
-            style: tt.labelMedium?.copyWith(
-                color: cs.onSurfaceVariant, letterSpacing: 0.3)),
+            style: tt.labelMedium
+                ?.copyWith(color: cs.onSurfaceVariant, letterSpacing: 0.3)),
         const SizedBox(height: 8),
         Row(
           children: [
@@ -217,8 +220,8 @@ class _ResultsBody extends StatelessWidget {
 
         // Quality metrics
         Text('Jakość pomiaru',
-            style: tt.labelMedium?.copyWith(
-                color: cs.onSurfaceVariant, letterSpacing: 0.3)),
+            style: tt.labelMedium
+                ?.copyWith(color: cs.onSurfaceVariant, letterSpacing: 0.3)),
         const SizedBox(height: 8),
         Card(
           child: Padding(
@@ -230,13 +233,17 @@ class _ResultsBody extends StatelessWidget {
                   value: '${result.palletRmsMm.toStringAsFixed(2)} mm',
                   ok: result.palletRmsMm < 30,
                 ),
-                Divider(height: 20, color: cs.outlineVariant.withOpacity(0.5)),
+                Divider(
+                    height: 20,
+                    color: cs.outlineVariant.withValues(alpha: 0.5)),
                 _MetricRow(
                   label: 'Punkty obiektu',
                   value: result.nObjectPts.toString(),
                   ok: result.nObjectPts > 50,
                 ),
-                Divider(height: 20, color: cs.outlineVariant.withOpacity(0.5)),
+                Divider(
+                    height: 20,
+                    color: cs.outlineVariant.withValues(alpha: 0.5)),
                 _MetricRow(
                   label: 'Inliery palety',
                   value: result.nPalletInliers.toString(),
@@ -251,8 +258,8 @@ class _ResultsBody extends StatelessWidget {
         if (result.issues.isNotEmpty) ...[
           const SizedBox(height: 12),
           Text('Problemy',
-              style: tt.labelMedium?.copyWith(
-                  color: cs.onSurfaceVariant, letterSpacing: 0.3)),
+              style: tt.labelMedium
+                  ?.copyWith(color: cs.onSurfaceVariant, letterSpacing: 0.3)),
           const SizedBox(height: 8),
           Card(
             color: cs.errorContainer,
@@ -272,8 +279,8 @@ class _ResultsBody extends StatelessWidget {
                             const SizedBox(width: 6),
                             Expanded(
                               child: Text(issue,
-                                  style: tt.bodySmall?.copyWith(
-                                      color: cs.onErrorContainer)),
+                                  style: tt.bodySmall
+                                      ?.copyWith(color: cs.onErrorContainer)),
                             ),
                           ],
                         ),
@@ -302,7 +309,7 @@ class _ResultsBody extends StatelessWidget {
 class _DimCard extends StatelessWidget {
   final String label;
   final double valueMm;
-  final Color  color;
+  final Color color;
 
   const _DimCard({
     required this.label,
@@ -344,7 +351,7 @@ class _DimCard extends StatelessWidget {
 class _MetricRow extends StatelessWidget {
   final String label;
   final String value;
-  final bool   ok;
+  final bool ok;
 
   const _MetricRow({
     required this.label,
@@ -360,7 +367,8 @@ class _MetricRow extends StatelessWidget {
     return Row(
       children: [
         Container(
-          width: 6, height: 6,
+          width: 6,
+          height: 6,
           decoration: BoxDecoration(
             color: ok ? AppColors.success : AppColors.warning,
             shape: BoxShape.circle,

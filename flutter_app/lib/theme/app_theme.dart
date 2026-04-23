@@ -5,14 +5,14 @@ abstract final class AppColors {
   static const seed = Color(0xFF1A3F6F);
 
   // Session state indicators - muted, not garish
-  static const stateIdle        = Color(0xFF78909C);
+  static const stateIdle = Color(0xFF78909C);
   static const stateCalibrating = Color(0xFFA07830);
-  static const stateReady       = Color(0xFF1A5276);
-  static const stateProcessing  = Color(0xFF4A5990);
-  static const stateDone        = Color(0xFF1E7D4F);
+  static const stateReady = Color(0xFF1A5276);
+  static const stateProcessing = Color(0xFF4A5990);
+  static const stateDone = Color(0xFF1E7D4F);
 
   // Dimension cards - unified family, readable on white
-  static const dimWidth  = Color(0xFF1E5799);
+  static const dimWidth = Color(0xFF1E5799);
   static const dimLength = Color(0xFF1A6B5A);
   static const dimHeight = Color(0xFF8B6420);
 
@@ -23,23 +23,35 @@ abstract final class AppColors {
 
 Color stateColor(String state, ColorScheme cs) {
   switch (state) {
-    case 'IDLE':        return AppColors.stateIdle;
-    case 'CALIBRATING': return AppColors.stateCalibrating;
-    case 'READY':       return AppColors.stateReady;
-    case 'PROCESSING':  return AppColors.stateProcessing;
-    case 'DONE':        return AppColors.stateDone;
-    default:            return AppColors.stateIdle;
+    case 'IDLE':
+      return AppColors.stateIdle;
+    case 'CALIBRATING':
+      return AppColors.stateCalibrating;
+    case 'READY':
+      return AppColors.stateReady;
+    case 'PROCESSING':
+      return AppColors.stateProcessing;
+    case 'DONE':
+      return AppColors.stateDone;
+    default:
+      return AppColors.stateIdle;
   }
 }
 
 String stateLabel(String state) {
   switch (state) {
-    case 'IDLE':        return 'Oczekiwanie';
-    case 'CALIBRATING': return 'Kalibracja';
-    case 'READY':       return 'Gotowa';
-    case 'PROCESSING':  return 'Przetwarzanie';
-    case 'DONE':        return 'Zakończona';
-    default:            return state;
+    case 'IDLE':
+      return 'Oczekiwanie';
+    case 'CALIBRATING':
+      return 'Kalibracja';
+    case 'READY':
+      return 'Gotowa';
+    case 'PROCESSING':
+      return 'Przetwarzanie';
+    case 'DONE':
+      return 'Zakończona';
+    default:
+      return state;
   }
 }
 
@@ -52,7 +64,6 @@ ThemeData buildTheme() {
   return ThemeData(
     useMaterial3: true,
     colorScheme: cs,
-
     appBarTheme: AppBarTheme(
       centerTitle: false,
       elevation: 0,
@@ -66,16 +77,14 @@ ThemeData buildTheme() {
         letterSpacing: 0,
       ),
     ),
-
-    cardTheme: CardTheme(
+    cardTheme: CardThemeData(
       elevation: 0,
       color: cs.surfaceContainerLowest,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
-        side: BorderSide(color: cs.outlineVariant.withOpacity(0.6)),
+        side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.6)),
       ),
     ),
-
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: cs.surfaceContainerLow,
@@ -97,7 +106,6 @@ ThemeData buildTheme() {
         borderSide: BorderSide(color: cs.error),
       ),
     ),
-
     elevatedButtonTheme: ElevatedButtonThemeData(
       style: ElevatedButton.styleFrom(
         elevation: 0,
@@ -105,37 +113,31 @@ ThemeData buildTheme() {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     ),
-
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     ),
-
     textButtonTheme: TextButtonThemeData(
       style: TextButton.styleFrom(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),
     ),
-
     dividerTheme: DividerThemeData(
-      color: cs.outlineVariant.withOpacity(0.7),
+      color: cs.outlineVariant.withValues(alpha: 0.7),
       thickness: 0.5,
     ),
-
     listTileTheme: const ListTileThemeData(
       contentPadding: EdgeInsets.symmetric(horizontal: 16),
       minVerticalPadding: 10,
     ),
-
     snackBarTheme: SnackBarThemeData(
       behavior: SnackBarBehavior.floating,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       backgroundColor: cs.inverseSurface,
       contentTextStyle: TextStyle(color: cs.onInverseSurface),
     ),
-
     switchTheme: SwitchThemeData(
       thumbColor: WidgetStateProperty.resolveWith((states) {
         if (states.contains(WidgetState.selected)) return cs.primary;
@@ -143,7 +145,7 @@ ThemeData buildTheme() {
       }),
       trackColor: WidgetStateProperty.resolveWith((states) {
         if (states.contains(WidgetState.selected)) {
-          return cs.primary.withOpacity(0.3);
+          return cs.primary.withValues(alpha: 0.3);
         }
         return cs.surfaceContainerHighest;
       }),

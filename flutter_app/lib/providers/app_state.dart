@@ -4,7 +4,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -137,7 +136,8 @@ class AppState extends ChangeNotifier {
   }
 
   /// Dołącza do istniejącej sesji (follower).
-  Future<bool> joinExisting(String sid, String did, String m, bool leader) async {
+  Future<bool> joinExisting(
+      String sid, String did, String m, bool leader) async {
     _setLoading(true);
     try {
       serverUrl = serverUrl.trim();
@@ -174,9 +174,12 @@ class AppState extends ChangeNotifier {
   void _connectWs() {
     if (sessionId == null || deviceId.isEmpty) return;
 
-    final wsBase = serverUrl
-        .replaceFirst(RegExp(r'^https://'), 'wss://')
-        .replaceFirst(RegExp(r'^http://'), 'ws://');
+    String wsBase = serverUrl;
+    if (wsBase.startsWith('https://')) {
+      wsBase = 'wss://${wsBase.substring(8)}';
+    } else if (wsBase.startsWith('http://')) {
+      wsBase = 'ws://${wsBase.substring(7)}';
+    }
     final wsUrl = '$wsBase/ws/$sessionId/$deviceId';
 
     _ws?.sink.close();
@@ -221,8 +224,7 @@ class AppState extends ChangeNotifier {
     switch (event) {
       case 'pong':
         final st = (msg['t'] as num?)?.toDouble() ?? 0.0;
-        serverTimeOffset =
-            st - DateTime.now().millisecondsSinceEpoch / 1000.0;
+        serverTimeOffset = st - DateTime.now().millisecondsSinceEpoch / 1000.0;
         wsConnected = true;
         break;
 

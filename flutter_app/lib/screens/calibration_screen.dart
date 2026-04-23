@@ -57,17 +57,18 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
     await state.startCalibration();
     if (mounted && state.error == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Kalibracja uruchomiona — czekaj na wynik')),
+        const SnackBar(
+            content: Text('Kalibracja uruchomiona — czekaj na wynik')),
       );
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final state   = context.watch<AppState>();
-    final theme   = Theme.of(context);
-    final cs      = theme.colorScheme;
-    final tt      = theme.textTheme;
+    final state = context.watch<AppState>();
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final tt = theme.textTheme;
     final session = state.session;
 
     final myFrames = session?.devices
@@ -75,7 +76,7 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
             .firstOrNull
             ?.calibFrameCount ??
         0;
-    final minFrames    = session?.minCalibFrames ?? 0;
+    final minFrames = session?.minCalibFrames ?? 0;
     final canCalibrate = state.isLeader && minFrames >= 3;
 
     return Scaffold(
@@ -116,15 +117,17 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Instrukcja', style: tt.titleSmall?.copyWith(
-                      color: cs.primary, fontWeight: FontWeight.w600)),
+                  Text('Instrukcja',
+                      style: tt.titleSmall?.copyWith(
+                          color: cs.primary, fontWeight: FontWeight.w600)),
                   const SizedBox(height: 8),
                   Text(
                     '1. Przygotuj szachownicę kalibracyjną.\n'
                     '2. Sfotografuj ją z różnych kątów (min. 3 zdjęcia).\n'
                     '3. Gdy wszystkie urządzenia mają min. 3 klatki, lider uruchamia kalibrację.\n'
                     '4. Poczekaj na wynik — błąd reprojekcji < 1 px to dobry wynik.',
-                    style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant, height: 1.5),
+                    style: tt.bodySmall
+                        ?.copyWith(color: cs.onSurfaceVariant, height: 1.5),
                   ),
                 ],
               ),
@@ -140,8 +143,9 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Postęp kalibracji', style: tt.titleSmall?.copyWith(
-                      color: cs.primary, fontWeight: FontWeight.w600)),
+                  Text('Postęp kalibracji',
+                      style: tt.titleSmall?.copyWith(
+                          color: cs.primary, fontWeight: FontWeight.w600)),
                   const SizedBox(height: 12),
                   if (session != null)
                     ...session.devices.map(
@@ -151,7 +155,8 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
                           Row(
                             children: [
                               Container(
-                                width: 6, height: 6,
+                                width: 6,
+                                height: 6,
                                 decoration: BoxDecoration(
                                   color: d.isLeader
                                       ? AppColors.stateReady
@@ -163,8 +168,8 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
                               Text(d.deviceId, style: tt.bodySmall),
                               const Spacer(),
                               Text('${d.calibFrameCount} klatek',
-                                  style: tt.bodySmall?.copyWith(
-                                      color: cs.onSurfaceVariant)),
+                                  style: tt.bodySmall
+                                      ?.copyWith(color: cs.onSurfaceVariant)),
                             ],
                           ),
                           const SizedBox(height: 6),
@@ -198,10 +203,13 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
                 : () => _captureAndUpload(state),
             icon: _uploading
                 ? const SizedBox(
-                    width: 18, height: 18,
+                    width: 18,
+                    height: 18,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : Icon(kIsWeb ? Icons.upload_file_outlined : Icons.camera_alt_outlined),
+                : const Icon(kIsWeb
+                    ? Icons.upload_file_outlined
+                    : Icons.camera_alt_outlined),
             label: Text(
               kIsWeb
                   ? 'Wybierz obraz kalibracyjny'
@@ -219,7 +227,8 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
                   : null,
               icon: state.isLoading
                   ? const SizedBox(
-                      width: 18, height: 18,
+                      width: 18,
+                      height: 18,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.calculate_outlined),
@@ -238,13 +247,16 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
           else
             Card(
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 child: Row(
                   children: [
-                    Icon(Icons.info_outline, size: 16, color: cs.onSurfaceVariant),
+                    Icon(Icons.info_outline,
+                        size: 16, color: cs.onSurfaceVariant),
                     const SizedBox(width: 8),
                     Text('Kalibrację uruchamia lider sesji',
-                        style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+                        style:
+                            tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
                   ],
                 ),
               ),

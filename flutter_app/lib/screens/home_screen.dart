@@ -14,17 +14,17 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final _serverCtrl = TextEditingController(text: 'http://192.168.1.1:8000');
   final _deviceCtrl = TextEditingController();
-  final _macCtrl    = TextEditingController();
-  final _sidCtrl    = TextEditingController();
+  final _macCtrl = TextEditingController();
+  final _sidCtrl = TextEditingController();
   bool _isLeader = true;
-  bool _busy     = false;
+  bool _busy = false;
 
   @override
   void initState() {
     super.initState();
     final s = context.read<AppState>();
     _deviceCtrl.text = s.deviceId;
-    _macCtrl.text    = s.mac;
+    _macCtrl.text = s.mac;
   }
 
   @override
@@ -48,7 +48,8 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     setState(() => _busy = false);
     if (ok && mounted) {
-      Navigator.push(context, MaterialPageRoute(builder: (_) => const SessionScreen()));
+      Navigator.push(
+          context, MaterialPageRoute(builder: (_) => const SessionScreen()));
     }
   }
 
@@ -70,7 +71,8 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     setState(() => _busy = false);
     if (ok && mounted) {
-      Navigator.push(context, MaterialPageRoute(builder: (_) => const SessionScreen()));
+      Navigator.push(
+          context, MaterialPageRoute(builder: (_) => const SessionScreen()));
     }
   }
 
@@ -88,13 +90,16 @@ class _HomeScreenState extends State<HomeScreen> {
           columnWidths: const {0: IntrinsicColumnWidth(), 1: FlexColumnWidth()},
           children: [
             _tableRow('Szerokość', '${result.widthMm.toStringAsFixed(0)} mm'),
-            _tableRow('Długość',   '${result.lengthMm.toStringAsFixed(0)} mm'),
-            _tableRow('Wysokość',  '${result.heightMm.toStringAsFixed(0)} mm'),
-            _tableRow('Walidacja', result.validationPassed ? 'Zaliczona' : 'Niezaliczona'),
+            _tableRow('Długość', '${result.lengthMm.toStringAsFixed(0)} mm'),
+            _tableRow('Wysokość', '${result.heightMm.toStringAsFixed(0)} mm'),
+            _tableRow('Walidacja',
+                result.validationPassed ? 'Zaliczona' : 'Niezaliczona'),
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Zamknij')),
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Zamknij')),
         ],
       ),
     );
@@ -110,7 +115,8 @@ class _HomeScreenState extends State<HomeScreen> {
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
             child: Text(value,
-                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                style:
+                    const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
           ),
         ],
       );
@@ -118,28 +124,34 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
-    final cs    = Theme.of(context).colorScheme;
-    final tt    = Theme.of(context).textTheme;
+    final cs = Theme.of(context).colorScheme;
+    final tt = Theme.of(context).textTheme;
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('StereoVision'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.network_check),
-            tooltip: 'Test połączenia',
-            onPressed: _busy
-                ? null
-                : () async {
-                    state.serverUrl = _serverCtrl.text.trim();
-                    final ok = await state.testConnection();
-                    if (!mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                      content: Text(ok ? 'Serwer dostępny' : 'Brak połączenia z serwerem'),
-                      backgroundColor: ok ? null : cs.error,
-                    ));
-                  },
-          ),
+          Builder(builder: (context) {
+            return IconButton(
+              icon: const Icon(Icons.network_check),
+              tooltip: 'Test połączenia',
+              onPressed: _busy
+                  ? null
+                  : () async {
+                      final messenger = ScaffoldMessenger.of(context);
+
+                      state.serverUrl = _serverCtrl.text.trim();
+                      final ok = await state.testConnection();
+
+                      messenger.showSnackBar(SnackBar(
+                        content: Text(ok
+                            ? 'Serwer dostępny'
+                            : 'Brak połączenia z serwerem'),
+                        backgroundColor: ok ? null : cs.error,
+                      ));
+                    },
+            );
+          }),
         ],
       ),
       body: SingleChildScrollView(
@@ -149,7 +161,6 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             if (state.error != null)
               _ErrorBanner(message: state.error!, onClose: state.clearError),
-
             _Section(
               title: 'Połączenie',
               child: TextField(
@@ -162,9 +173,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 keyboardType: TextInputType.url,
               ),
             ),
-
             const SizedBox(height: 12),
-
             _Section(
               title: 'Urządzenie',
               child: Column(
@@ -187,9 +196,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
-
             const SizedBox(height: 12),
-
             _Section(
               title: 'Nowa sesja',
               child: SizedBox(
@@ -198,16 +205,15 @@ class _HomeScreenState extends State<HomeScreen> {
                   onPressed: _busy ? null : () => _createAndJoin(state),
                   icon: _busy
                       ? const SizedBox(
-                          width: 16, height: 16,
+                          width: 16,
+                          height: 16,
                           child: CircularProgressIndicator(strokeWidth: 2))
                       : const Icon(Icons.add),
                   label: const Text('Utwórz sesję i dołącz jako lider'),
                 ),
               ),
             ),
-
             const SizedBox(height: 12),
-
             _Section(
               title: 'Dołącz do sesji',
               child: Column(
@@ -224,7 +230,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   SwitchListTile(
                     title: Text('Rola lidera', style: tt.bodyMedium),
                     subtitle: Text(
-                      _isLeader ? 'Lewa kamera — zarządza sesją' : 'Prawa kamera — follower',
+                      _isLeader
+                          ? 'Lewa kamera — zarządza sesją'
+                          : 'Prawa kamera — follower',
                       style: tt.bodySmall,
                     ),
                     value: _isLeader,
@@ -240,9 +248,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
-
             const SizedBox(height: 12),
-
             _Section(
               title: 'Diagnostyka',
               child: Column(
@@ -265,7 +271,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
-
             const SizedBox(height: 24),
           ],
         ),
@@ -320,14 +325,15 @@ class _ErrorBanner extends StatelessWidget {
       decoration: BoxDecoration(
         color: cs.errorContainer,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: cs.error.withOpacity(0.3)),
+        border: Border.all(color: cs.error.withValues(alpha: 0.3)),
       ),
       child: Row(
         children: [
           Icon(Icons.error_outline, color: cs.error, size: 18),
           const SizedBox(width: 10),
-          Expanded(child: Text(message,
-              style: TextStyle(color: cs.onErrorContainer, fontSize: 13))),
+          Expanded(
+              child: Text(message,
+                  style: TextStyle(color: cs.onErrorContainer, fontSize: 13))),
           GestureDetector(
             onTap: onClose,
             child: Icon(Icons.close, color: cs.onErrorContainer, size: 18),
