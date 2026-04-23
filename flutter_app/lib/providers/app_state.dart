@@ -6,24 +6,46 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../models/models.dart';
 import '../services/api_service.dart';
 
 class AppState extends ChangeNotifier {
+  static const _kServerUrl = 'server_url';
+  static const _kDeviceId = 'device_id';
+  static const _kMac = 'mac';
+
+  final SharedPreferences _prefs;
+
+  AppState(this._prefs) {
+    _serverUrl = _prefs.getString(_kServerUrl) ?? 'http://192.168.1.1:8000';
+    deviceId = _prefs.getString(_kDeviceId) ?? _generateDeviceId();
+    mac = _prefs.getString(_kMac) ?? _generateMac();
+    _prefs.setString(_kDeviceId, deviceId);
+    _prefs.setString(_kMac, mac);
+  }
+
   // -------------------------------------------------------------------------
   // Konfiguracja serwera
   // -------------------------------------------------------------------------
 
-  String serverUrl = 'http://192.168.1.1:8000';
+  String _serverUrl = 'http://192.168.1.1:8000';
+
+  String get serverUrl => _serverUrl;
+
+  set serverUrl(String v) {
+    _serverUrl = v;
+    _prefs.setString(_kServerUrl, v);
+  }
 
   // -------------------------------------------------------------------------
   // Tożsamość urządzenia
   // -------------------------------------------------------------------------
 
-  String deviceId = _generateDeviceId();
-  String mac = _generateMac();
+  String deviceId = '';
+  String mac = '';
   bool isLeader = true;
 
   // -------------------------------------------------------------------------
@@ -233,6 +255,11 @@ class AppState extends ChangeNotifier {
         refreshSession();
         break;
 
+      case 'device_left':
+        _setInfo('Urządzenie ${msg['device_id']} opuściło sesję');
+        refreshSession();
+        break;
+
       case 'calibration_done':
         final err = (msg['reproj_error'] as num?)?.toStringAsFixed(3) ?? '?';
         _setInfo('Kalibracja zakończona - błąd reprojekcji: $err px');
@@ -278,14 +305,42 @@ class AppState extends ChangeNotifier {
   }
 
   // -------------------------------------------------------------------------
-  // Kalibracja
+  // Kalibracja — staging obrazów (przeżywa nawigację)
   // -------------------------------------------------------------------------
 
-  Future<bool> uploadCalibImage(Uint8List bytes) async {
-    if (sessionId == null || deviceId.isEmpty) return false;
+  final List<({Uint8List bytes, String name})> pendingCalibImages = [];
+
+  void addPendingCalibImages(List<({Uint8List bytes, String name})> images) {
+    pendingCalibImages.addAll(images);
+    notifyListeners();
+  }
+
+  void removePendingCalibImage(int index) {
+    if (index >= 0 && index < pendingCalibImages.length) {
+      pendingCalibImages.removeAt(index);
+      notifyListeners();
+    }
+  }
+
+  void clearPendingCalibImages() {
+    pendingCalibImages.clear();
+    notifyListeners();
+  }
+
+  /// Wysyła wszystkie obrazy ze staging na serwer, po czym czyści listę.
+  Future<bool> uploadAllPendingCalibImages() async {
+    if (pendingCalibImages.isEmpty || sessionId == null || deviceId.isEmpty) {
+      return false;
+    }
+    _setLoading(true);
     try {
-      await _api.uploadCalibImage(sessionId!, deviceId, bytes);
+      final toUpload = List.of(pendingCalibImages);
+      for (final img in toUpload) {
+        await _api.uploadCalibImage(sessionId!, deviceId, img.bytes);
+      }
+      pendingCalibImages.clear();
       await refreshSession();
+      _setLoading(false);
       return true;
     } catch (e) {
       _setError(e.toString());
@@ -381,9 +436,10 @@ class AppState extends ChangeNotifier {
     _ws = null;
     _wsSub = null;
 
-    if (sessionId != null) {
+    if (sessionId != null && deviceId.isNotEmpty) {
       try {
-        await _api.deleteSession(sessionId!);
+        // Usuwa to urządzenie; backend sam usuwa sesję gdy zostaje pusta.
+        await _api.leaveDevice(sessionId!, deviceId);
       } catch (_) {}
     }
 
@@ -394,11 +450,12 @@ class AppState extends ChangeNotifier {
     wsConnected = false;
     serverTimeOffset = 0.0;
     wsLog.clear();
+    pendingCalibImages.clear();
     notifyListeners();
   }
 
   // -------------------------------------------------------------------------
-  // Generatory ID (przy braku SharedPreferences)
+  // Generatory ID (fallback gdy brak zapisu w SharedPreferences)
   // -------------------------------------------------------------------------
 
   static String _generateDeviceId() {

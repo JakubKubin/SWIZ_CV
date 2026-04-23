@@ -12,17 +12,18 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final _serverCtrl = TextEditingController(text: 'http://192.168.1.1:8000');
+  final _serverCtrl = TextEditingController();
   final _deviceCtrl = TextEditingController();
   final _macCtrl = TextEditingController();
   final _sidCtrl = TextEditingController();
-  bool _isLeader = true;
   bool _busy = false;
+  bool? _connectionOk;
 
   @override
   void initState() {
     super.initState();
     final s = context.read<AppState>();
+    _serverCtrl.text = s.serverUrl;
     _deviceCtrl.text = s.deviceId;
     _macCtrl.text = s.mac;
   }
@@ -67,7 +68,7 @@ class _HomeScreenState extends State<HomeScreen> {
       sid,
       _deviceCtrl.text.trim(),
       _macCtrl.text.trim(),
-      _isLeader,
+      false,
     );
     setState(() => _busy = false);
     if (ok && mounted) {
@@ -132,8 +133,13 @@ class _HomeScreenState extends State<HomeScreen> {
         title: const Text('StereoVision'),
         actions: [
           Builder(builder: (context) {
+            final iconColor = _connectionOk == true
+                ? Colors.green
+                : _connectionOk == false
+                    ? cs.error
+                    : null;
             return IconButton(
-              icon: const Icon(Icons.network_check),
+              icon: Icon(Icons.network_check, color: iconColor),
               tooltip: 'Test połączenia',
               onPressed: _busy
                   ? null
@@ -142,6 +148,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
                       state.serverUrl = _serverCtrl.text.trim();
                       final ok = await state.testConnection();
+                      setState(() => _connectionOk = ok);
 
                       messenger.showSnackBar(SnackBar(
                         content: Text(ok
@@ -226,20 +233,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       prefixIcon: Icon(Icons.link_outlined),
                     ),
                   ),
-                  const SizedBox(height: 4),
-                  SwitchListTile(
-                    title: Text('Rola lidera', style: tt.bodyMedium),
-                    subtitle: Text(
-                      _isLeader
-                          ? 'Lewa kamera — zarządza sesją'
-                          : 'Prawa kamera — follower',
-                      style: tt.bodySmall,
-                    ),
-                    value: _isLeader,
-                    onChanged: (v) => setState(() => _isLeader = v),
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
-                  ),
+                  const SizedBox(height: 8),
                   ElevatedButton.icon(
                     onPressed: _busy ? null : () => _joinExisting(state),
                     icon: const Icon(Icons.login_outlined),

@@ -20,9 +20,7 @@ class SessionScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(session == null
-            ? 'Sesja'
-            : 'Sesja  ${session.sessionId.substring(0, 8)}…'),
+        title: Text(session == null ? 'Sesja' : 'Sesja ${session.sessionId}'),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh_outlined),
@@ -100,7 +98,7 @@ class _SessionBody extends StatelessWidget {
                     style: tt.titleSmall
                         ?.copyWith(color: color, fontWeight: FontWeight.w600)),
                 const Spacer(),
-                Text('ID: ${session.sessionId.substring(0, 8)}…',
+                Text('ID: ${session.sessionId}',
                     style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
               ],
             ),

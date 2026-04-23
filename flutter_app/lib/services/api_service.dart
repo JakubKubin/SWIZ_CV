@@ -82,6 +82,13 @@ class ApiService {
     if (r.statusCode != 204 && r.statusCode != 404) await _checkStatus(r);
   }
 
+  /// Usuwa jedno urządzenie z sesji. Backend automatycznie usuwa sesję
+  /// gdy nie zostanie żadne urządzenie.
+  Future<void> leaveDevice(String sid, String deviceId) async {
+    final r = await http.delete(_uri('/sessions/$sid/devices/$deviceId'));
+    if (r.statusCode != 204 && r.statusCode != 404) await _checkStatus(r);
+  }
+
   Future<List<SessionData>> listSessions() async {
     final r = await http.get(_uri('/sessions'));
     await _checkStatus(r);

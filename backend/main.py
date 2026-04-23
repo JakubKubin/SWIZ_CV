@@ -207,6 +207,35 @@ async def delete_session(session_id: str):
     return Response(status_code=204)
 
 
+@app.delete("/sessions/{session_id}/devices/{device_id}", status_code=204, tags=["Sesje"])
+async def leave_session(session_id: str, device_id: str):
+    """Usuwa jedno urządzenie z sesji.
+
+    Jeśli żadne urządzenie nie pozostało, sesja jest automatycznie usuwana
+    (wraz z danymi na dysku).
+    """
+    session = await _get_or_404(session_id)
+
+    if device_id not in session.devices:
+        raise HTTPException(status_code=404, detail=f"Urządzenie '{device_id}' nie jest w sesji")
+
+    del session.devices[device_id]
+    log.info("[%s] Urządzenie opuściło sesję: %s (%d pozostało)",
+             session_id, device_id, len(session.devices))
+
+    await ws_manager.broadcast(session_id, {
+        "event": "device_left",
+        "device_id": device_id,
+        "remaining": len(session.devices),
+    })
+
+    if not session.devices:
+        await store.delete(session_id)
+        log.info("[%s] Sesja usunięta automatycznie (brak urządzeń)", session_id)
+
+    return Response(status_code=204)
+
+
 # ===========================================================================
 # KALIBRACJA
 # ===========================================================================
