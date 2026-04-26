@@ -1,17 +1,20 @@
 # pallet.py
-"""ETAP 5: Detekcja plaszczyzny europalety w chmurze punktow 3D.
+"""Etap 5 pipeline: detekcja plaszczyzny europalety w chmurze punktow 3D.
 
-Algorytm:
-  1. RANSAC - losowe 3 punkty -> plaszczyzna -> liczymy inliery
-  2. SVD-refinement na inlierach - dokladna normalna
-  3. Transformacja do ukladu wspolrzednych palety (Z=0 to powierzchnia)
-  4. Filtr ROI - punkty wewnatrz 1200x800 mm
+Algorytm sklada sie z czterech krokow:
+  1. RANSAC         - losuje trojki punktow, szuka plaszczyzny z max. liczba inlierow
+  2. SVD-refinement - dokladna normalna z dekompozycji SVD na wszystkich inlierach
+  3. Transformacja  - obraca chmure tak, by powierzchnia palety lezala w Z=0
+  4. Filtr ROI      - zachowuje tylko punkty wewnatrz gabarytu 1200x800 mm
+
+Rezultatem jest PalletDetectionResult z chmura w ukladzie palety i maska ROI,
+ktore sa nastepnie przekazywane do measurement.py (etap 6+7).
 
 Uzycie:
     from pallet import detect_pallet, PalletDetectionResult
     result = detect_pallet(xyz)
-    # result.xyz_pallet - chmura w ukladzie palety
-    # result.roi_mask   - punkty wewnatrz obrysu palety
+    # result.xyz_pallet - chmura w ukladzie palety (Z=0 to powierzchnia)
+    # result.roi_mask   - maska bool punktow wewnatrz obrysu palety
 """
 import logging
 from dataclasses import dataclass
@@ -29,20 +32,30 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class PlaneModel:
+    """Wyznaczona plaszczyzna z parametrami i statystykami dopasowania.
+
+    Rownanie plaszczyzny: normal . x + d = 0
+    Odleglosc punktu p od plaszczyzny: |normal . p + d|
+    """
     normal: np.ndarray       # (3,) znormalizowany wektor normalny, wskazuje w strone kamery
-    d: float                 # wspolczynnik: normal . x + d = 0
-    inlier_mask: np.ndarray  # (N,) bool - maska inlierow
-    inlier_pts: np.ndarray   # (M,3) - punkty nalezace do plaszczyzny
-    rms_residual: float      # RMS odleglosci inlierow od plaszczyzny [mm]
+    d: float                 # wyraz wolny rownania plaszczyzny
+    inlier_mask: np.ndarray  # (N,) bool - maska punktow lezacych na plaszczyznie
+    inlier_pts: np.ndarray   # (M,3) - wspolrzedne inlierow [mm]
+    rms_residual: float      # RMS odleglosci inlierow od plaszczyzny [mm]; im mniejszy, tym lepszy fit
 
 
 @dataclass
 class PalletDetectionResult:
+    """Wynik detekcji europalety - zawiera chmure w ukladzie palety i maska ROI.
+
+    Po detekcji chmura jest juz przeksztalcona do ukladu palety (Z=0 = powierzchnia),
+    co pozwala bezposrednio segmentowac obiekty lezace powyzej (Z > 0).
+    """
     plane: PlaneModel
-    xyz_pallet: np.ndarray   # (N,3) cala chmura w ukladzie palety
-    roi_mask: np.ndarray     # (N,) bool - punkty wewnatrz 1200x800 mm
+    xyz_pallet: np.ndarray   # (N,3) cala chmura w ukladzie palety [mm]
+    roi_mask: np.ndarray     # (N,) bool - True dla punktow wewnatrz gabarytu 1200x800 mm
     R: np.ndarray            # (3,3) macierz obrotu: uklad kamery -> uklad palety
-    centroid: np.ndarray     # (3,) centroid inlierow w ukladzie kamery
+    centroid: np.ndarray     # (3,) srodek inlierow w ukladzie kamery (origin ukladu palety)
 
 
 # ---------------------------------------------------------------------------
@@ -83,16 +96,20 @@ def detect_pallet_plane(
     best_d = None
 
     for _ in range(n_iterations):
+        # Losujemy 3 rozne punkty - minimalna liczba do wyznaczenia plaszczyzny
         idx = rng.choice(n, 3, replace=False)
         p0, p1, p2 = xyz[idx[0]], xyz[idx[1]], xyz[idx[2]]
 
+        # Normalna plaszczyzny = iloczyn wektorowy dwoch krawedzi trojkata
         normal = np.cross(p1 - p0, p2 - p0)
         norm_len = np.linalg.norm(normal)
         if norm_len < 1e-9:
+            # Punkty sa wspoliniowe - pomijamy ta iteracje
             continue
         normal = normal / norm_len
         d = -np.dot(normal, p0)
 
+        # Liczymy inlierów: punkty odlegle od plaszczyzny o mniej niz distance_threshold
         dists = np.abs(xyz @ normal + d)
         inlier_count = int((dists < distance_threshold).sum())
 
@@ -106,7 +123,10 @@ def detect_pallet_plane(
             f"Nie znaleziono plaszczyzny palety: max inlierow={best_inlier_count} < {min_inliers}"
         )
 
-    # Refinement SVD na inlierach
+    # SVD-refinement: RANSAC daje przyblizona plaszczyzne, SVD na inlierach
+    # wyznacza dokladna normalna metoda minimalnej wariancji (PCA).
+    # Ostatni wiersz Vt odpowiada kierunkowi najmniejszej zmiennosci - czyli
+    # prostopadlemu do plaszczyzny, czyli normalnej.
     inlier_mask_rough = np.abs(xyz @ best_normal + best_d) < distance_threshold
     inlier_pts = xyz[inlier_mask_rough]
 
@@ -116,16 +136,17 @@ def detect_pallet_plane(
     normal_refined = Vt[-1]  # ostatni wiersz = normalna (min wariancja)
     normal_refined = normal_refined / np.linalg.norm(normal_refined)
 
-    # Konwencja znaku: normalna musi wskazywac w strone kamery (origin)
+    # Konwencja znaku: normalna musi wskazywac w strone kamery (origin),
+    # bo to ona bedzie podstawa ukladu wspolrzednych palety (os Z ku gorze).
     # Centroid plaszczyzny jest "za" kamera, wiec dot(normal, centroid) < 0
-    # oznacza, ze normalna wskazuje ku kamerze - to jest poprawne.
-    # Jesli dot > 0, obracamy.
+    # oznacza, ze normalna wskazuje ku kamerze.
+    # Jesli dot > 0, obracamy kierunek normalnej.
     if np.dot(normal_refined, centroid) > 0:
         normal_refined = -normal_refined
 
     d_refined = -np.dot(normal_refined, centroid)
 
-    # Finalna maska inlierow po SVD
+    # Ponowna maska inlierow z uzyciem udokadnionej normalnej po SVD
     residuals = xyz @ normal_refined + d_refined
     inlier_mask = np.abs(residuals) < distance_threshold
     inlier_pts_final = xyz[inlier_mask]
@@ -168,18 +189,22 @@ def transform_to_pallet_frame(
         - centroid:   (3,) srodek ciezkosc inlierow w ukladzie kamery
     """
     centroid = plane.inlier_pts.mean(axis=0)
-    z_axis = plane.normal  # juz znormalizowany
+    z_axis = plane.normal  # juz znormalizowany, wskazuje ku kamerze
 
-    # Wybor referencyjnego wektora X
+    # Wybor wektora referencyjnego do budowy osi X ukladu palety.
+    # Jesli normalna jest zbyt rownolega do [1,0,0], uzywamy [0,1,0]
+    # aby uniknac degeneracji przy iloczynie wektorowym.
     ref = np.array([1.0, 0.0, 0.0])
     if abs(np.dot(ref, z_axis)) > 0.9:
         ref = np.array([0.0, 1.0, 0.0])
 
+    # Gram-Schmidt: rzutujemy ref na plaszczyzne prostopadla do Z, normalizujemy
     x_axis = ref - np.dot(ref, z_axis) * z_axis
     x_axis = x_axis / np.linalg.norm(x_axis)
-    y_axis = np.cross(z_axis, x_axis)
+    y_axis = np.cross(z_axis, x_axis)  # trzecia os - prawoskretny uklad
 
     R = np.vstack([x_axis, y_axis, z_axis])  # wiersze = wektory bazowe
+    # Rotacja i translacja: przenosimy cala chmure do ukladu palety
     xyz_pallet = (R @ (xyz - centroid).T).T
 
     return xyz_pallet, R, centroid
@@ -190,9 +215,19 @@ def filter_roi(
     pallet_width_mm: float = config.PALLET_WIDTH_MM,
     pallet_length_mm: float = config.PALLET_LENGTH_MM,
 ) -> np.ndarray:
-    """Zwraca maska bool punktow wewnatrz obrysu palety (wg wymirow nominalnych).
+    """Zwraca maske bool punktow lezacych wewnatrz obrysu europalety.
 
-    Zaklada, ze origin ukladu palety = centroid plaszczyzny = srodek palety.
+    Zaklada, ze origin ukladu palety pokrywa sie ze srodkiem cizkosci
+    inlierow RANSAC (czyli mniej wiecej srodkiem palety). Punkty spoza
+    gabarytu nominalnego sa odrzucane - nie beda uzyte do pomiaru obiektu.
+
+    Args:
+        xyz_pallet:      (N,3) chmura w ukladzie palety [mm]
+        pallet_width_mm: nominalna szerokosc palety (os X) [mm]
+        pallet_length_mm: nominalna dlugosc palety (os Y) [mm]
+
+    Returns:
+        (N,) bool - True dla punktow wewnatrz gabarytu
     """
     half_w = pallet_width_mm / 2.0
     half_l = pallet_length_mm / 2.0
@@ -248,6 +283,7 @@ def detect_pallet(
     xyz_pallet, R, centroid = transform_to_pallet_frame(xyz, plane)
     roi_mask = filter_roi(xyz_pallet, pallet_width_mm, pallet_length_mm)
 
+    # rng_seed=0 zapewnia powtarzalnosc wynikow przy tych samych danych wejsciowych
     return PalletDetectionResult(
         plane=plane,
         xyz_pallet=xyz_pallet,
