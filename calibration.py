@@ -1,6 +1,17 @@
 # calibration.py
 """Modul kalibracji kamer - metoda Zhanga (OpenCV).
+
 Obsluguje kalibracje pojedynczej kamery oraz kalibracje stereo.
+Wyniki kalibracji (macierze K, wspolczynniki dystorsji, R, T, Q)
+sa zapisywane do pliku JSON i wczytywane przez pozostale moduly
+(disparity.py, pipeline.py, backend/tasks.py).
+
+
+Przykladowe uzycie CLI:
+    python calibration.py --mode stereo \\
+        --left-dir calib_images/left \\
+        --right-dir calib_images/right \\
+        --output calib_output/stereo.json
 """
 import os, json, glob, logging
 from pathlib import Path
@@ -14,7 +25,7 @@ import config
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger(__name__)
 
-# Aliasy dla czytelnosci (wartosci pochodza z config, ktory czyta env)
+# Lokalne aliasy stalych z config - skracaja zapis w calym module
 BOARD_ROWS = config.BOARD_ROWS
 BOARD_COLS = config.BOARD_COLS
 SQUARE_SIZE = config.SQUARE_SIZE_MM
@@ -29,10 +40,16 @@ CRITERIA = config.TERM_CRITERIA
 
 @dataclass
 class CalibrationData:
-    """Zebrane punkty kalibracyjne dla pojedynczej kamery."""
+    """Zebrane punkty kalibracyjne dla pojedynczej kamery.
+
+    obj_points - wspolrzedne 3D naroznikow szachownicy w ukladzie wzorca
+                 (Z=0, bo szachownica jest plaska). Jednostka: mm.
+    img_points - odpowiadajace im wspolrzedne 2D na obrazie [px].
+    Obie listy musza miec te sama dlugosc - kazdy element to jedna klatka.
+    """
     obj_points: list   # list[np.ndarray shape (N,3)] - wspolrzedne 3D wzorca
     img_points: list   # list[np.ndarray shape (N,1,2)] - punkty 2D na obrazie
-    image_size: tuple[int, int]  # (width, height)
+    image_size: tuple[int, int]  # (width, height) - potrzebne do calibrateCamera
 
     def __len__(self) -> int:
         return len(self.obj_points)
@@ -41,10 +58,14 @@ class CalibrationData:
 @dataclass
 class StereoCalibrationData:
     """Zebrane punkty kalibracyjne dla pary stereo.
-    Zawiera wylacznie pary, gdzie obie kamery wykryly wzorzec."""
-    obj_points: list
-    left_points: list
-    right_points: list
+
+    Zawiera wylacznie pary klatek, gdzie OBIE kamery wykryly wzorzec.
+    Pary niekompletne (tylko jedna kamera widzi szachownice) sa odrzucane,
+    bo stereoCalibrate wymaga odpowiadajacych sobie punktow z obu kamer.
+    """
+    obj_points: list        # wspolrzedne 3D - wspolne dla obu kamer
+    left_points: list       # punkty 2D z lewej kamery
+    right_points: list      # punkty 2D z prawej kamery
     image_size: tuple[int, int]
 
     def __len__(self) -> int:
@@ -52,12 +73,14 @@ class StereoCalibrationData:
 
     @property
     def left(self) -> CalibrationData:
-        """Dane lewej kamery - gotowe do przekazania do _calibrate_from_data."""
+        """Dane lewej kamery sformatowane jako CalibrationData.
+        Pozwala przekazac je bezposrednio do _calibrate_from_data()."""
         return CalibrationData(self.obj_points, self.left_points, self.image_size)
 
     @property
     def right(self) -> CalibrationData:
-        """Dane prawej kamery - gotowe do przekazania do _calibrate_from_data."""
+        """Dane prawej kamery sformatowane jako CalibrationData.
+        Pozwala przekazac je bezposrednio do _calibrate_from_data()."""
         return CalibrationData(self.obj_points, self.right_points, self.image_size)
 
 
@@ -67,16 +90,25 @@ class StereoCalibrationData:
 
 @dataclass
 class CameraParams:
+    """Parametry wewnetrzne pojedynczej kamery.
+
+    camera_matrix - macierz wewnetrzna K (3x3): ogniskowe fx, fy i punkt glowny cx, cy
+    dist_coeffs   - wspolczynniki dystorsji obiektywu (k1,k2,p1,p2,k3)
+    reproj_error  - RMS bledu reprojekcji z kalibracji [px]; im nizszy, tym lepsza kalibracja
+    image_size    - (width, height) obrazow uzytych do kalibracji
+    """
     camera_matrix: np.ndarray = field(default_factory=lambda: np.eye(3))
     dist_coeffs: np.ndarray = field(default_factory=lambda: np.zeros(5))
     reproj_error: float = 0.0
     image_size: tuple = (0, 0)
 
     def undistort(self, frame: np.ndarray) -> np.ndarray:
-        """Zwraca obraz skorygowany o dystorsje obiektywu."""
+        """Zwraca obraz skorygowany o dystorsje obiektywu.
+        Przydatne do podgladu - w pipeline uzywamy remap() dla wydajnosci."""
         return cv2.undistort(frame, self.camera_matrix, self.dist_coeffs)
 
     def to_dict(self):
+        """Serializuje parametry do slownika (do zapisu JSON)."""
         return {
             "camera_matrix": self.camera_matrix.tolist(),
             "dist_coeffs": self.dist_coeffs.tolist(),
@@ -86,6 +118,7 @@ class CameraParams:
 
     @classmethod
     def from_dict(cls, d):
+        """Odtwarza obiekt z slownika (wczytanego z JSON)."""
         return cls(
             camera_matrix=np.array(d["camera_matrix"]),
             dist_coeffs=np.array(d["dist_coeffs"]),
@@ -96,6 +129,18 @@ class CameraParams:
 
 @dataclass
 class StereoParams:
+    """Pelne parametry systemu stereo - kalibracja obu kamer + ich wzajemne polozenie.
+
+    Pola geometrii stereo:
+      R, T - rotacja i translacja z lewej do prawej kamery (wynik stereoCalibrate)
+      E    - macierz esencjalna (zawiera R i T w skondensowanej formie)
+      F    - macierz fundamentalna (jak E, ale w pikselach; przydatna do rysowania linii epipolarnych)
+
+    Pola rektyfikacji (wynik stereoRectify, uzywane przez rectify_maps()):
+      R1, R2 - macierze obrotu doprowadzajace kazda kamere do wspolnej plaszczyzny
+      P1, P2 - macierze projekcji po rektyfikacji (zawieraja fx, fy, cx, cy)
+      Q      - macierz reprojekcji 4x4: przelicza dysparycje na wspolrzedne 3D [mm]
+    """
     left: CameraParams = field(default_factory=CameraParams)
     right: CameraParams = field(default_factory=CameraParams)
     R: np.ndarray = field(default_factory=lambda: np.eye(3))
@@ -103,24 +148,32 @@ class StereoParams:
     E: np.ndarray = field(default_factory=lambda: np.eye(3))
     F: np.ndarray = field(default_factory=lambda: np.eye(3))
     reproj_error: float = 0.0
-    # Wyniki cv2.stereoRectify - potrzebne do szybkiego prostowania w czasie rzeczywistym
+    # Wyniki stereoRectify - przechowywane, zeby rectify_maps() nie musial
+    # wywolywac stereoRectify ponownie przy kazdym uzyciu
     R1: np.ndarray = field(default_factory=lambda: np.eye(3))
     R2: np.ndarray = field(default_factory=lambda: np.eye(3))
     P1: np.ndarray = field(default_factory=lambda: np.zeros((3, 4)))
     P2: np.ndarray = field(default_factory=lambda: np.zeros((3, 4)))
-    Q: np.ndarray = field(default_factory=lambda: np.eye(4))  # disparity -> depth
+    Q: np.ndarray = field(default_factory=lambda: np.eye(4))  # disparity -> wspolrzedne 3D [mm]
 
     def rectify_maps(
         self, image_size: tuple[int, int] | None = None
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """Zwraca mapy rektyfikacji (map1L, map2L, map1R, map2R).
+        """Generuje mapy przeksztalcen do rektyfikacji pary stereo.
 
-        Uzycie w petli przechwytywania (raz zainicjalizowane, potem szybkie):
+
+
+        Przyklad uzycia w petli przechwytywania:
             map1L, map2L, map1R, map2R = stereo.rectify_maps()
             left_rect  = cv2.remap(left_frame,  map1L, map2L, cv2.INTER_LINEAR)
             right_rect = cv2.remap(right_frame, map1R, map2R, cv2.INTER_LINEAR)
+
+        Returns:
+            (map1L, map2L, map1R, map2R) - mapy dla lewego i prawego obrazu
         """
         size = image_size or self.left.image_size
+        # initUndistortRectifyMap laczy korekcje dystorsji i rektyfikacje w jednej mapie,
+        # co pozwala wykonac obie operacje jednym wywolaniem cv2.remap()
         map1L, map2L = cv2.initUndistortRectifyMap(
             self.left.camera_matrix, self.left.dist_coeffs,
             self.R1, self.P1, size, cv2.CV_16SC2,
@@ -132,6 +185,7 @@ class StereoParams:
         return map1L, map2L, map1R, map2R
 
     def to_dict(self):
+        """Serializuje wszystkie parametry stereo do slownika (do zapisu JSON)."""
         return {
             "left": self.left.to_dict(), "right": self.right.to_dict(),
             "R": self.R.tolist(), "T": self.T.tolist(),
@@ -144,13 +198,20 @@ class StereoParams:
 
     @classmethod
     def from_dict(cls, d):
+        """Odtwarza obiekt z slownika wczytanego z pliku JSON.
+
+        Klucze R1/R2/P1/P2/Q sa opcjonalne - starsze pliki kalibracji
+        (zapisane przed dodaniem stereoRectify do pipeline) moga ich nie zawierac.
+        W takim przypadku przyjmowane sa wartosci neutralne (macierze jednostkowe/zerowe)
+        i rectify_maps() nie zadziala poprawnie - wymagana jest ponowna kalibracja.
+        """
         return cls(
             left=CameraParams.from_dict(d["left"]),
             right=CameraParams.from_dict(d["right"]),
             R=np.array(d["R"]), T=np.array(d["T"]),
             E=np.array(d["E"]), F=np.array(d["F"]),
             reproj_error=d["reproj_error"],
-            # Klucze opcjonalne - backward compat ze starymi plikami JSON
+            # Klucze R1/R2/P1/P2/Q sa opcjonalne - starsze pliki JSON moga ich nie miec
             R1=np.array(d.get("R1", np.eye(3))),
             R2=np.array(d.get("R2", np.eye(3))),
             P1=np.array(d.get("P1", np.zeros((3, 4)))),
@@ -160,32 +221,53 @@ class StereoParams:
 
 
 # ---------------------------------------------------------------------------
-# Wykrywanie naroznikow
+# Wykrywanie naroznikow szachownicy
 # ---------------------------------------------------------------------------
 
 def _board_points() -> np.ndarray:
+    """Generuje wspolrzedne 3D naroznikow szachownicy w ukladzie wzorca.
+
+    Szachownica jest traktowana jako plaska (Z=0). Wspolrzedne X,Y sa
+    wyrazone w milimetrach (numer_naroznika * SQUARE_SIZE_MM).
+    Zwrocona tablica ma ksztalt (BOARD_ROWS*BOARD_COLS, 3).
+
+    Przyklad dla szachownicy 3x3 z kwadratem 15mm:
+        [(0,0,0), (15,0,0), (30,0,0),
+         (0,15,0), (15,15,0), (30,15,0), ...]
+    """
     pts = np.zeros((BOARD_ROWS * BOARD_COLS, 3), np.float32)
+    # mgrid generuje siatke indeksow, reshape(-1,2) spłaszcza do listy punktow
     pts[:, :2] = np.mgrid[0:BOARD_ROWS, 0:BOARD_COLS].T.reshape(-1, 2)
     return pts * SQUARE_SIZE
 
 
 def find_corners(image: np.ndarray) -> Optional[np.ndarray]:
-    """Wykrywa narozniki szachownicy na obrazie.
+    """Wykrywa narozniki szachownicy na obrazie z precyzja subpikselowa.
 
-    Probuje findChessboardCornersSB (subpixel wbudowany, lepszy dla wysokich
-    rozdzielczosci), nastepnie wraca do findChessboardCorners + cornerSubPix.
+    Strategia dwuetapowa:
+    1. findChessboardCornersSB - nowsza metoda z wbudowana precyzja subpikselowa,
+       lepsza dla wysokich rozdzielczosci i trudnych warunkow oswietleniowych.
+    2. findChessboardCorners + cornerSubPix - klasyczna metoda jako fallback,
+       gdy SB nie znajdzie wzorca (np. czesciowe zasloniecie szachownicy).
+
+    Args:
+        image: obraz BGR lub grayscale
+
+    Returns:
+        tablica naroznikow (N,1,2) lub None jezeli wzorzec nie zostal wykryty
     """
-    # Skaluj duze obrazy do max 1920px szerokosci
+    # Skalowanie do max 1920px: detekcja naroznikow na pelnej rozdzielczosci
+    # telefonow (3-4K) jest bardzo wolna bez poprawy jakosci kalibracji
     h, w = image.shape[:2]
     scale = 1.0
     if w > 1920:
         scale = 1920 / w
         image = cv2.resize(image, (1920, int(h * scale)))
-    
-    
+
+    # Konwersja do skali szarosci - algorytm detekcji naroznikow nie korzysta z koloru
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
 
-    # Metoda SB: dokladniejsza, subpixel w jednym przejsciu, brak oddzielnego cornerSubPix
+    # Metoda SB: dokladniejsza, wbudowana precyzja subpikselowa w jednym przejsciu
     found, corners = cv2.findChessboardCornersSB(
         gray, (BOARD_ROWS, BOARD_COLS),
         flags=cv2.CALIB_CB_EXHAUSTIVE | cv2.CALIB_CB_ACCURACY,
@@ -193,13 +275,14 @@ def find_corners(image: np.ndarray) -> Optional[np.ndarray]:
     if found:
         return corners
 
-    # Fallback: klasyczna metoda + cornerSubPix
+    # Fallback: klasyczna metoda findChessboardCorners + reczny krok subpikselowy
     found, corners = cv2.findChessboardCorners(
         gray, (BOARD_ROWS, BOARD_COLS),
         flags=cv2.CALIB_CB_ADAPTIVE_THRESH + cv2.CALIB_CB_NORMALIZE_IMAGE + cv2.CALIB_CB_FAST_CHECK,
     )
     if not found:
         return None
+    # cornerSubPix doprecyzowuje polozenie naroznikow do ulamkow piksela
     return cv2.cornerSubPix(
         gray, corners,
         config.CORNER_SUBPIX_WIN, config.CORNER_SUBPIX_ZERO_ZONE, CRITERIA,
@@ -211,10 +294,17 @@ def find_corners(image: np.ndarray) -> Optional[np.ndarray]:
 # ---------------------------------------------------------------------------
 
 def collect_points(image_paths: list[str]) -> CalibrationData:
-    """Wczytuje obrazy i wykrywa narozniki szachownicy.
+    """Wczytuje obrazy i wykrywa narozniki szachownicy dla pojedynczej kamery.
 
-    Kazdy obraz przetwarzany jest dokladnie raz - wyniki przekaz bezposrednio
-    do _calibrate_from_data(), aby uniknac ponownego wykrywania.
+    Kazdy obraz przetwarzany jest dokladnie raz. Wyniki nalezy przekazac
+    bezposrednio do _calibrate_from_data(), aby uniknac ponownego wykrywania
+    naroznikow (co jest operacja kosztowna obliczeniowo).
+
+    Args:
+        image_paths: lista sciezek do obrazow kalibracyjnych
+
+    Returns:
+        CalibrationData z zebranymi punktami 2D i 3D
     """
     obj_points, img_points, img_size = [], [], None
     objp = _board_points()
@@ -223,6 +313,7 @@ def collect_points(image_paths: list[str]) -> CalibrationData:
         if img is None:
             log.warning("Nie mozna wczytac: %s", path)
             continue
+        # Rozmiar obrazu pobieramy z pierwszej poprawnie wczytanej klatki
         if img_size is None:
             img_size = (img.shape[1], img.shape[0])
         corners = find_corners(img)
@@ -244,8 +335,16 @@ def collect_stereo_points(
 ) -> StereoCalibrationData:
     """Wykrywa narozniki szachownicy w parach stereo.
 
-    Kazdy obraz przetwarzany jest dokladnie raz. Zwraca tylko pary, gdzie
-    obie kamery wykryly wzorzec - gotowe do calibrate_stereo / stereoCalibrate.
+    Kazdy obraz przetwarzany jest dokladnie raz. Do wyniku trafiaja tylko
+    pary, gdzie OBIE kamery wykryly wzorzec - stereoCalibrate wymaga
+    pelnych, odpowiadajacych sobie punktow z obu kamer.
+
+    Args:
+        left_paths:  posortowane sciezki do obrazow lewej kamery
+        right_paths: posortowane sciezki do obrazow prawej kamery (ta sama kolejnosc)
+
+    Returns:
+        StereoCalibrationData z dopasowanymi parami punktow
     """
     objp = _board_points()
     obj_pts, left_pts, right_pts, img_size = [], [], [], None
@@ -255,7 +354,8 @@ def collect_stereo_points(
             log.warning("Nie mozna wczytac pary: %s, %s", lp, rp)
             continue
 
-        # Skaluj duze obrazy do max 1920px szerokosci
+        # Skalowanie obu obrazow pary do tej samej rozdzielczosci - konieczne
+        # dla zgodnosci wymiarow przy stereoCalibrate i pozniejszej rektyfikacji
         h, w = l_img.shape[:2]
         if w > 1920:
             scale = 1920 / w
@@ -267,6 +367,7 @@ def collect_stereo_points(
 
         lc, rc = find_corners(l_img), find_corners(r_img)
         if lc is None or rc is None:
+            # Para jest niekompletna - odrzucamy calosc, nie mozna uzyc czesciowych danych
             log.warning("Brak naroznikow w parze: %s, %s", lp, rp)
             continue
         obj_pts.append(objp)
@@ -285,7 +386,15 @@ def collect_stereo_points(
 # ---------------------------------------------------------------------------
 
 def _calibrate_from_data(data: CalibrationData) -> CameraParams:
-    """Kalibruje kamere na podstawie juz zebranych punktow (bez ponownego I/O)."""
+    """Kalibruje kamere na podstawie juz zebranych punktow (bez ponownego I/O).
+
+    Wywoluje cv2.calibrateCamera, ktore metoda Zhanga wyznacza macierz wewnetrzna
+    K i wspolczynniki dystorsji minimalizujac blad reprojekcji (RMS [px]).
+    Jako punkt startowy przekazujemy macierz jednostkowa i zerowe dystorsje -
+    OpenCV sam wyznacza poczatkowe przyblizenie metoda DLT.
+
+    
+    """
     if len(data) < config.MIN_CALIBRATION_IMAGES:
         raise ValueError(
             f"Za malo obrazow z wykrytym wzorcem ({len(data)}), "
@@ -301,19 +410,32 @@ def _calibrate_from_data(data: CalibrationData) -> CameraParams:
 
 
 def calibrate_single(image_paths: list[str]) -> CameraParams:
-    """Kalibruje pojedyncza kamere ze sciezek do obrazow."""
+    """Kalibruje pojedyncza kamere ze sciezek do obrazow.
+    Publiczny wrapper laczacy collect_points() i _calibrate_from_data()."""
     return _calibrate_from_data(collect_points(image_paths))
 
 
 def calibrate_stereo(
     left_paths: list[str], right_paths: list[str]
 ) -> StereoParams:
-    """Kalibruje pare stereo.
+    """Kalibruje pare stereo i wyznacza wszystkie parametry potrzebne do pomiaru.
 
-    Narozniki wykrywane sa dokladnie raz na obraz. Te same punkty trafiaja
-    do kalibracji indywidualnych i do stereoCalibrate - brak powtornego I/O.
-    Na koncu wywoluje stereoRectify i zapisuje R1/R2/P1/P2/Q w StereoParams,
-    dzieki czemu rectify_maps() jest gotowe do uzycia od razu.
+    Etapy:
+      1. collect_stereo_points  - wykrywa narozniki w parach (kazdy obraz raz)
+      2. _calibrate_from_data   - kalibruje lewa i prawa kamere osobno
+      3. cv2.stereoCalibrate    - wyznacza wzajemne polozenie kamer (R, T, E, F)
+      4. cv2.stereoRectify      - oblicza macierze R1/R2/P1/P2/Q do rektyfikacji
+
+    Flaga CALIB_FIX_INTRINSIC w stereoCalibrate oznacza, ze parametry wewnetrzne
+    kamer (z kroku 2) sa traktowane jako stale - tylko R i T sa optymalizowane.
+    Dzieki temu stereoCalibrate jest stabilniejszy numerycznie.
+
+    Args:
+        left_paths:  posortowane sciezki do obrazow lewej kamery
+        right_paths: posortowane sciezki do obrazow prawej kamery
+
+    Returns:
+        StereoParams gotowe do uzycia w rectify_maps() i dalszym pipeline
     """
     if len(left_paths) != len(right_paths):
         raise ValueError("Liczba obrazow lewej i prawej kamery musi byc rowna")
@@ -326,7 +448,8 @@ def calibrate_stereo(
         )
 
     log.info("Kalibracja stereo na %d parach...", len(stereo_data))
-    # Te same punkty co stereo - bez ponownego wykrywania naroznikow
+    # Uzywamy tych samych wykrytych punktow do kalibracji indywidualnych kamer
+    # i do stereoCalibrate - eliminuje ponowne I/O i gwarantuje spojnosc danych
     left_cam = _calibrate_from_data(stereo_data.left)
     right_cam = _calibrate_from_data(stereo_data.right)
 
@@ -340,8 +463,9 @@ def calibrate_stereo(
     )
     log.info("Stereo RMS reproj. error: %.4f px", rms)
 
-    # stereoRectify: oblicza macierze do rektyfikacji obrazow w czasie rzeczywistym
-    # alpha=0: wszystkie piksele po rektyfikacji sa wazne (brak czarnych pasow)
+    # stereoRectify wyznacza macierze R1/R2/P1/P2/Q potrzebne do rektyfikacji
+    # par zdjecien w czasie rzeczywistym. alpha=0 oznacza pelne wypelnienie
+    # obrazu po rektyfikacji (brak czarnych pasow na krawedziach)
     R1, R2, P1, P2, Q, _, _ = cv2.stereoRectify(
         left_cam.camera_matrix, left_cam.dist_coeffs,
         right_cam.camera_matrix, right_cam.dist_coeffs,
@@ -357,10 +481,12 @@ def calibrate_stereo(
 
 
 # ---------------------------------------------------------------------------
-# Zapis / odczyt
+# Zapis / odczyt parametrow
 # ---------------------------------------------------------------------------
 
 def save_params(params: CameraParams | StereoParams, path: str):
+    """Zapisuje parametry kalibracji do pliku JSON.
+    Tworzy katalogi nadrzedne jesli nie istnieja."""
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         json.dump(params.to_dict(), f, indent=2)
@@ -376,12 +502,23 @@ def load_params(path: str, stereo: Literal[True]) -> StereoParams: ...
 
 
 def load_params(path: str, stereo: bool = False) -> CameraParams | StereoParams:
+    """Wczytuje parametry kalibracji z pliku JSON.
+
+    Args:
+        path:   sciezka do pliku JSON (zapisanego przez save_params)
+        stereo: True -> zwraca StereoParams, False -> zwraca CameraParams
+    """
     with open(path) as f:
         d = json.load(f)
     return StereoParams.from_dict(d) if stereo else CameraParams.from_dict(d)
 
 
 def get_image_paths(directory: str, pattern: str | None = None) -> list[str]:
+    """Zwraca posortowana liste sciezek do obrazow w podanym katalogu.
+
+    Przeszukuje kolejno rozszerzenia z config.IMAGE_EXTENSIONS i zwraca
+    pierwsze niepuste dopasowanie. Jezeli pattern jest podany, uzywa tylko jego.
+    """
     exts = [pattern] if pattern else config.IMAGE_EXTENSIONS
     for ext in exts:
         paths = sorted(glob.glob(str(Path(directory) / ext)))
@@ -391,7 +528,7 @@ def get_image_paths(directory: str, pattern: str | None = None) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# CLI
+# CLI - uruchomienie jako skrypt
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
@@ -404,6 +541,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.mode == "single":
+        # Dla trybu single szukamy obrazow najpierw w left-dir, potem w CALIB_DIR
         imgs = get_image_paths(args.left_dir) or get_image_paths(CALIB_DIR)
         params = calibrate_single(imgs)
     else:

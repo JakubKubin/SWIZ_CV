@@ -1,18 +1,22 @@
 # pointcloud.py
-"""Generowanie i zapis chmury punktow 3D z mapy dysparycji.
+"""Generowanie, filtrowanie i zapis chmury punktow 3D z mapy dysparycji.
 
-Uzywa macierzy Q z StereoParams Kuby (stereo.Q) do reprojekcji
-dysparycji w przestrzen 3D, opcjonalnie koloruje punkty obrazem RGB.
+Przepływ:
+  1. build_pointcloud()   - reprojekcja dysparycji -> wspolrzedne XYZ [mm] + kolory RGB
+  2. filter_pointcloud()  - usuniecie szumowych "latajacych" punktow (filtr statystyczny)
+  3. save_ply()           - zapis do pliku PLY (ASCII lub binarny)
+  4. render_topdown/sideview() - szybki rzut 2D do weryfikacji bez narzedzi 3D
 
-Uzycie:
-    python pointcloud.py --calib calib_output/stereo.json \
-                         --disparity depth_output/disparity.npy \
-                         --color left_rect.png \
+Uzycie CLI:
+    python pointcloud.py --calib calib_output/stereo.json \\
+                         --disparity depth_output/disparity.npy \\
+                         --color left_rect.png \\
                          --output depth_output/cloud.ply
 
 Z kodu:
     from pointcloud import build_pointcloud, save_ply, filter_pointcloud
     xyz, colors = build_pointcloud(disparity, stereo.Q, left_rect)
+    xyz, colors = filter_pointcloud(xyz, colors)
     save_ply("cloud.ply", xyz, colors)
 """
 import logging
@@ -39,9 +43,10 @@ def build_pointcloud(
 ) -> tuple[np.ndarray, np.ndarray | None]:
     """Buduje chmure punktow 3D z mapy dysparycji i macierzy Q.
 
-    Macierz Q pochodzi z StereoParams.Q (zapisana przez Kube po stereoRectify).
-    cv2.reprojectImageTo3D mnozy kazdy piksel [x, y, d, 1]^T przez Q i zwraca
-    wspolrzedne [X, Y, Z] w mm (jesli kalibracja byla w mm).
+    Macierz Q pochodzi z StereoParams.Q wyznaczonej podczas kalibracji stereo
+    przez cv2.stereoRectify. cv2.reprojectImageTo3D mnozy kazdy piksel
+    [x, y, d, 1]^T przez Q i zwraca wspolrzedne [X, Y, Z] w mm
+    (jesli kalibracja byla prowadzona w milimetrach).
 
     Args:
         disparity:    mapa dysparycji float32 z compute_disparity()
@@ -54,9 +59,11 @@ def build_pointcloud(
         xyz:    (N, 3) float32 - wspolrzedne punktow w mm
         colors: (N, 3) uint8 RGB lub None jesli brak color_image
     """
-    points_3d = cv2.reprojectImageTo3D(disparity, Q)  # (H, W, 3)
+    points_3d = cv2.reprojectImageTo3D(disparity, Q)  # (H, W, 3) -> X, Y, Z [mm]
 
-    # Maska: tylko piksele z prawidlowa dysparycja i sensowna glebokoscia
+    # Maska waznosci: odrzucamy piksele bez dysparycji, z nieskonczonymi
+    # wspolrzednymi (efekt dzielenia przez zero przy d=0) i spoza zakresu
+    # pomiarowego (za bliskie = szum krawedzi, za dalekie = nierzetelne dane)
     mask = (
         (disparity > 0) &
         np.isfinite(points_3d[:, :, 2]) &
@@ -64,11 +71,12 @@ def build_pointcloud(
         (points_3d[:, :, 2] < max_depth_mm)
     )
 
-    xyz = points_3d[mask].astype(np.float32)  # (N, 3)
+    xyz = points_3d[mask].astype(np.float32)  # (N, 3) - tylko wazne punkty
 
     colors = None
     if color_image is not None:
-        # color_image jest BGR (OpenCV), zapisujemy jako RGB
+        # OpenCV przechowuje obrazy w formacie BGR; konwertujemy do RGB
+        # bo format PLY i wiekszosc narzedzi 3D oczekuje RGB
         rgb = cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB) if color_image.ndim == 3 else \
               cv2.cvtColor(color_image, cv2.COLOR_GRAY2RGB)
         colors = rgb[mask]  # (N, 3) uint8
@@ -102,27 +110,33 @@ def filter_pointcloud(
         log.warning("Za malo punktow do filtrowania (%d), pomijam", len(xyz))
         return xyz, colors
 
-    # Przyblizony filtr: dla kazdego punktu liczymy odleglosc do nb_neighbors
-    # najblizszych sasiadow. Uzywamy losowej probki dla wydajnosci.
+    # Przyblizony filtr statystyczny: szacujemy srednia odleglosc do k najblizszych
+    # sasiadow na probce, a nastepnie usuwamy punkty, ktorych odleglosc od probki
+    # przekracza prog mean + std_ratio*std. Eliminuje "latajace" punkty szumu SGBM
+    # bez potrzeby biblioteki Open3D.
     sample_size = min(len(xyz), 5000)
     sample_idx  = np.random.choice(len(xyz), sample_size, replace=False)
     sample      = xyz[sample_idx]
 
-    # Odleglosci w probce - partiami zeby uniknac macierzy S*S w pamieci
+    # Obliczamy srednia odleglosc do nb_neighbors najblizszych sasiadow
+    # dla kazdego punktu w probce. Przetwarzamy partiami (CHUNK), zeby
+    # uniknac alokacji macierzy (sample_size x sample_size) w pamieci.
     CHUNK = 500
     knn_dist = np.zeros(sample_size)
     for i in range(0, sample_size, CHUNK):
         chunk = sample[i:i+CHUNK]                              # (C, 3)
         diff  = chunk[:, None, :] - sample[None, :, :]        # (C, S, 3)
         dist  = np.sqrt((diff**2).sum(axis=2))                 # (C, S)
-        dist[:, i:i+len(chunk)] = np.inf                       # wyklucz siebie
+        dist[:, i:i+len(chunk)] = np.inf                       # wyklucz siebie (dystans=0)
         knn_dist[i:i+CHUNK] = np.sort(dist, axis=1)[:, :nb_neighbors].mean(axis=1)
 
     mean_d = knn_dist.mean()
     std_d  = knn_dist.std()
+    # Prog: punkty dalej niz mean + std_ratio*std od swoich sasiadow sa uznawane za szum
     thresh = mean_d + std_ratio * std_d
 
-    # Prog dla pelnej chmury: odleglosc do najblizszego punkta w probce (partiami)
+    # Dla pelnej chmury liczymy odleglosc do najblizszego punktu w probce
+    # (partiami) i porownujemy z progiem
     min_dist = np.full(len(xyz), np.inf)
     for i in range(0, len(xyz), CHUNK):
         chunk = xyz[i:i+CHUNK]                                 # (C, 3)
@@ -176,9 +190,16 @@ def save_ply(path: str, xyz: np.ndarray, colors: np.ndarray | None = None):
 
 
 def save_ply_binary(path: str, xyz: np.ndarray, colors: np.ndarray | None = None):
-    """Zapisuje chmure punktow do pliku PLY w formacie binarnym (szybsze, mniejsze pliki).
+    """Zapisuje chmure punktow do pliku PLY w formacie binarnym little-endian.
 
-    Preferowany dla duzych chmur (>100k punktow).
+    Znacznie szybszy i produkuje mniejsze pliki niz wersja ASCII.
+    Preferowany dla duzych chmur (>100k punktow). Kompatybilny z MeshLab,
+    CloudCompare i Open3D.
+
+    Args:
+        path:   sciezka wyjsciowa
+        xyz:    (N, 3) float32 wspolrzedne w mm
+        colors: (N, 3) uint8 RGB lub None
     """
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     n = len(xyz)
@@ -211,9 +232,16 @@ def render_topdown(
     resolution_mm: float = 5.0,
     canvas_size: int = 600,
 ) -> np.ndarray:
-    """Rzut chmury punktow z gory (os X-Z) jako obraz BGR.
+    """Rzut chmury punktow z gory (plaszczyzna X-Z) jako obraz BGR.
 
-    Uzyteczne do szybkiej weryfikacji ksztaltu obiektu bez narzedzi 3D.
+    Os Z odpowiada glebokosci (odleglosci od kamery), os X to przesunięcie
+    poziome. Przydatny do szybkiej weryfikacji ksztaltu i rozlozenia obiektu
+    bez potrzeby uzywania narzedzi do wizualizacji 3D.
+
+    Args:
+        xyz:         (N, 3) chmura punktow [mm]
+        colors:      (N, 3) kolory RGB lub None (szary)
+        canvas_size: rozmiar obrazu wyjsciowego [px]
     """
     if len(xyz) == 0:
         return np.zeros((canvas_size, canvas_size, 3), dtype=np.uint8)
@@ -221,10 +249,11 @@ def render_topdown(
     x, z = xyz[:, 0], xyz[:, 2]
     canvas = np.zeros((canvas_size, canvas_size, 3), dtype=np.uint8)
 
-    # Normalizacja do pikseli
+    # Normalizacja wspolrzednych do zakresu [0, canvas_size-1] px
     x_norm = ((x - x.min()) / max(x.max()-x.min(), 1e-3) * (canvas_size - 1)).astype(int)
     z_norm = ((z - z.min()) / max(z.max()-z.min(), 1e-3) * (canvas_size - 1)).astype(int)
-    z_norm = canvas_size - 1 - z_norm  # odwrocenie osi Y
+    # Odwrocenie osi pionowej: wieksze Z (dalej) -> na dole obrazu
+    z_norm = canvas_size - 1 - z_norm
 
     for i in range(len(xyz)):
         px, py = x_norm[i], z_norm[i]
@@ -243,7 +272,16 @@ def render_sideview(
     colors: np.ndarray | None = None,
     canvas_size: int = 600,
 ) -> np.ndarray:
-    """Rzut chmury z boku (os X-Y, gdzie Y to wysokosc) jako obraz BGR."""
+    """Rzut chmury z boku (plaszczyzna X-Y) jako obraz BGR.
+
+    Os Y odpowiada wysokosci (w gore = mniejsze wartosci Y w ukladzie kamery),
+    os X to przesuniecie poziome. Przydatny do oceny wysokosci obiektu.
+
+    Args:
+        xyz:         (N, 3) chmura punktow [mm]
+        colors:      (N, 3) kolory RGB lub None (szary)
+        canvas_size: rozmiar obrazu wyjsciowego [px]
+    """
     if len(xyz) == 0:
         return np.zeros((canvas_size, canvas_size, 3), dtype=np.uint8)
 

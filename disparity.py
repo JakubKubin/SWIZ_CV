@@ -1,10 +1,12 @@
 # disparity.py
 """Mapa dysparycji i mapa glebokosci z pary stereo.
 
-Uzywa parametrow kalibracji z calibration.py (Kuba) - StereoParams.rectify_maps()
-oraz StereoParams.Q do przeliczenia dysparycji na glebokos.
+Przepływ przetwarzania:
+  1. rectify_pair()        - korekcja dystorsji + wyrownanie linii epipolarnych
+  2. compute_disparity()   - SGBM: obliczenie przesuniecia pikseli miedzy obrazami
+  3. disparity_to_depth()  - przeliczenie dysparycji na glebokos [mm] przez macierz Q
 
-Uzycie:
+Uzycie CLI:
     python disparity.py --calib calib_output/stereo.json --left left.png --right right.png
 
 Z kodu:
@@ -56,7 +58,7 @@ class SGBMConfig:
 
 
 # ---------------------------------------------------------------------------
-# Rektyfikacja - uzywa rectify_maps() z StereoParams Kuby
+# Rektyfikacja stereo
 # ---------------------------------------------------------------------------
 
 def rectify_pair(
@@ -67,9 +69,10 @@ def rectify_pair(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Rektyfikuje pare stereo uzywajac parametrow z calibration.py.
 
-    Wywoluje stereo.rectify_maps() (zaimplementowane przez Kube) i aplikuje
-    cv2.remap na obu obrazach. Po rektyfikacji odpowiadajace sobie punkty
-    leza na tych samych poziomych liniach epiolarnych.
+    Wywoluje stereo.rectify_maps() i aplikuje cv2.remap na obu obrazach.
+    Po rektyfikacji odpowiadajace sobie punkty leza na tych samych
+    poziomych liniach epipolarnych - warunek konieczny dla poprawnego
+    dzialania algorytmu SGBM.
 
     Args:
         stereo:     StereoParams z load_params(..., stereo=True)
@@ -112,7 +115,8 @@ def compute_disparity(
     if cfg is None:
         cfg = SGBMConfig()
 
-    # SGBM wymaga obrazow szaroskalowych
+    # SGBM operuje na jednokanałowych obrazach szaroskalowych - kolor nie wnosi
+    # dodatkowej informacji do porownywania bloków pikseli miedzy obrazami
     gray_l = cv2.cvtColor(left_rect,  cv2.COLOR_BGR2GRAY) if left_rect.ndim  == 3 else left_rect
     gray_r = cv2.cvtColor(right_rect, cv2.COLOR_BGR2GRAY) if right_rect.ndim == 3 else right_rect
 
@@ -129,11 +133,13 @@ def compute_disparity(
         mode=cfg.mode,
     )
 
-    # OpenCV zwraca dysparycje * 16 (fixed-point), trzeba podzielic
+    # OpenCV zwraca dysparycje * 16 (zapis stałoprzecinkowy dla precyzji),
+    # dzielenie przez 16 przywraca wartosc w pikselach z dokladnoscia 1/16 px
     disp_raw = matcher.compute(gray_l, gray_r)
     disp_float = disp_raw.astype(np.float32) / 16.0
 
-    # Zerowanie nieprawidlowych pikseli (dysparycja <= 0 lub poza zakresem)
+    # Piksele z dysparycja <= 0 oznaczaja brak dopasowania po stronie lewej
+    # lub prawej - zerujemy je, aby nie powodowaly bledow przy konwersji do glebokosci
     invalid = (disp_float <= 0) | (disp_float >= cfg.num_disparities)
     disp_float[invalid] = 0.0
 
@@ -147,7 +153,7 @@ def compute_disparity(
 
 
 # ---------------------------------------------------------------------------
-# Mapa glebokosci - uzywa Q z StereoParams Kuby
+# Mapa glebokosci - reprojekcja dysparycji w przestrzen 3D
 # ---------------------------------------------------------------------------
 
 def disparity_to_depth(
@@ -157,9 +163,12 @@ def disparity_to_depth(
 ) -> np.ndarray:
     """Przelicza dysparycje na glebokos w milimetrach uzywajac macierzy Q.
 
-    Q to macierz 4x4 z cv2.stereoRectify, zapisana przez Kube w StereoParams.Q.
+    Q to macierz 4x4 z cv2.stereoRectify, zapisana w StereoParams.Q.
     cv2.reprojectImageTo3D mnozy [x, y, d, 1]^T przez Q i daje [X, Y, Z, W];
     glebokos = Z/W w jednostkach bazy (mm jesli SQUARE_SIZE_MM w mm).
+
+    Dzieki tej operacji kazdy piksel mapy dysparycji jest bezposrednio
+    zamieniany na wspolrzedna glebokosci w przestrzeni 3D.
 
     Args:
         disparity:    mapa dysparycji float32 (z compute_disparity)
@@ -172,7 +181,8 @@ def disparity_to_depth(
     points_3d = cv2.reprojectImageTo3D(disparity, Q)   # (H, W, 3) -> X, Y, Z [mm]
     depth_mm = points_3d[:, :, 2].copy()
 
-    # Zerowanie pikseli bez dysparycji i poza sensownym zakresem
+    # Zerujemy piksele bez dysparycji oraz te poza zakresem pomiarowym.
+    # Wartosc 0 sluzy jako znacznik "brak danych" na mapie glebokosci.
     no_data = (disparity <= 0) | (depth_mm <= 0) | (depth_mm > max_depth_mm)
     depth_mm[no_data] = 0.0
 
@@ -188,10 +198,16 @@ def disparity_to_depth(
 # ---------------------------------------------------------------------------
 
 def colormap_disparity(disparity: np.ndarray) -> np.ndarray:
-    """Zwraca kolorowa mape dysparycji (BGR) do zapisu/wyswietlenia."""
+    """Zwraca kolorowa mape dysparycji (BGR) do zapisu lub wyswietlenia.
+
+    Normalizuje wartosci tylko wsrod waznych pikseli (dysparycja > 0),
+    zeby nie zafalsowac skali przez piksele bez danych.
+    Czarne piksele = brak dopasowania SGBM.
+    """
     d = disparity.copy()
     mask = d > 0
     if mask.any():
+        # Normalizacja w zakresie waznych pikseli - ignorujemy zera (brak danych)
         d[mask] = cv2.normalize(d[mask].reshape(-1, 1), None, 0, 255,
                                 cv2.NORM_MINMAX).flatten()
     d8 = d.astype(np.uint8)
@@ -201,13 +217,18 @@ def colormap_disparity(disparity: np.ndarray) -> np.ndarray:
 
 
 def colormap_depth(depth_mm: np.ndarray) -> np.ndarray:
-    """Zwraca kolorowa mape glebokosci (BGR) do zapisu/wyswietlenia."""
+    """Zwraca kolorowa mape glebokosci (BGR) do zapisu lub wyswietlenia.
+
+    Skala jest odwrocona (255 - wartość) zeby blizsze obiekty byly cieplejsze
+    (czerwone), a dalsze zimniejsze (niebieskie).
+    Czarne piksele = brak danych.
+    """
     d = depth_mm.copy()
     mask = d > 0
     if mask.any():
         d[mask] = cv2.normalize(d[mask].reshape(-1, 1), None, 0, 255,
                                 cv2.NORM_MINMAX).flatten()
-    # Odwrocenie: blizej = cieplej
+    # Odwrocenie skali: blizej = cieplej (wyzsza wartosc po odwroceniu)
     d8 = (255 - d.astype(np.uint8))
     d8[~mask] = 0
     colored = cv2.applyColorMap(d8, cv2.COLORMAP_JET)
@@ -261,12 +282,12 @@ if __name__ == "__main__":
     out = Path(args.output)
     out.mkdir(parents=True, exist_ok=True)
 
-    # Pipeline
+    # Kolejnosc: rektyfikacja -> dysparycja -> glebokos -> zapis wynikow
     left_rect, right_rect = rectify_pair(stereo, left_img, right_img)
     disp   = compute_disparity(left_rect, right_rect)
     depth  = disparity_to_depth(disp, stereo.Q, args.max_depth)
 
-    # Zapis wynikow
+    # Zapis wszystkich wynikow - obrazy kolorowe do podgladu, .npy do dalszego przetwarzania
     cv2.imwrite(str(out / "epipolar_check.png"),  draw_epipolar_check(left_rect, right_rect))
     cv2.imwrite(str(out / "disparity_color.png"), colormap_disparity(disp))
     cv2.imwrite(str(out / "depth_color.png"),     colormap_depth(depth))

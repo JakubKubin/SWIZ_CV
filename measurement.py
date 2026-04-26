@@ -1,12 +1,15 @@
 # measurement.py
-"""ETAP 6+7: Segmentacja obiektu nad paleta i pomiar jego wymiarow.
+"""Etap 6+7 pipeline: segmentacja obiektu nad paleta i pomiar jego wymiarow 3D.
 
-Pipeline:
-  1. segment_object  - wyodrebnienie punktow obiektu powyzej powierzchni palety
-  2. compute_bounding_box - obliczenie bounding box 3D
-  3. extract_3d_contour   - obrys XY (convex hull)
-  4. validate_measurement - ocena jakosci detekcji i pomiaru
-  5. generate_report      - tekstowy raport po polsku
+Dane wejsciowe: PalletDetectionResult z pallet.py (chmura w ukladzie palety).
+Dane wyjsciowe: wymiary bounding box (szerokosc, dlugosc, wysokosc) w mm.
+
+Kolejnosc przetwarzania:
+  1. segment_object()      - wyodrebnia punkty powyzej powierzchni palety (Z > noise_floor)
+  2. compute_bounding_box() - oblicza prostopadloscienny bbox 3D na tych punktach
+  3. extract_3d_contour()   - wyznacza obrys XY jako convex hull (do wizualizacji)
+  4. validate_measurement() - sprawdza kryteria jakosci pomiaru i detekcji palety
+  5. generate_report()      - formatuje wyniki do czytelnego raportu tekstowego
 
 Uzycie:
     from pallet import detect_pallet
@@ -36,6 +39,13 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class BoundingBox:
+    """Prostopadloscienny bounding box 3D obiektu w ukladzie palety.
+
+    Wszystkie wartosci w milimetrach. Osie zgodne z ukladem palety:
+      X - szerokosc (rownolega do krotszej krawedzi palety)
+      Y - dlugosc   (rownolega do dluzszej krawedzi palety)
+      Z - wysokosc  (prostopadla do powierzchni palety, ku kamerze)
+    """
     x_min: float
     x_max: float
     y_min: float
@@ -44,28 +54,34 @@ class BoundingBox:
     z_max: float
     width: float   # x_max - x_min [mm]
     length: float  # y_max - y_min [mm]
-    height: float  # z_max - z_min [mm] - wysokosc nad paleta
+    height: float  # z_max - z_min [mm] - wysokosc nad powierzchnia palety
 
 
 @dataclass
 class MeasurementResult:
+    """Wynik pomiaru obiektu - bbox, punkty i metadane do walidacji."""
     bbox: BoundingBox
-    object_pts: np.ndarray      # (M,3) punkty obiektu w ukladzie palety
-    contour_pts: np.ndarray     # (K,2) wierzcholki convex hull w XY
-    pallet_result: PalletDetectionResult
-    n_object_pts: int
-    n_pallet_inliers: int
+    object_pts: np.ndarray      # (M,3) punkty obiektu w ukladzie palety [mm]
+    contour_pts: np.ndarray     # (K,2) wierzcholki convex hull w plaszczyznie XY
+    pallet_result: PalletDetectionResult  # oryginalny wynik detekcji palety
+    n_object_pts: int           # liczba punktow zaklasyfikowanych jako obiekt
+    n_pallet_inliers: int       # liczba inlierow RANSAC palety (miara jakosci fit)
 
 
 @dataclass
 class ValidationReport:
-    pallet_plane_rms_mm: float
-    n_pallet_inliers: int
-    pallet_coverage_ratio: float
-    object_height_ok: bool
-    object_within_roi: bool
-    issues: list = field(default_factory=list)
-    passed: bool = False
+    """Raport walidacyjny pomiaru - lista wykrytych problemow i ogolny status.
+
+    passed=True oznacza, ze wszystkie kryteria jakosci zostaly spelnione.
+    Jesli passed=False, lista issues zawiera opisy konkretnych problemow.
+    """
+    pallet_plane_rms_mm: float    # RMS residual plaszczyzny palety [mm]
+    n_pallet_inliers: int         # liczba inlierow RANSAC
+    pallet_coverage_ratio: float  # stosunek pokrycia palety przez inliery [0..1]
+    object_height_ok: bool        # czy wysokosc obiektu w sensownym zakresie
+    object_within_roi: bool       # czy obiekt nie wykracza poza obrys palety
+    issues: list = field(default_factory=list)  # lista opisow wykrytych problemow
+    passed: bool = False          # True jesli brak problemow
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +96,7 @@ def segment_object(
     """Zwraca maska bool punktow nalezacych do obiektu nad paleta.
 
     W ukladzie palety oS Z wskazuje ku kamerze: Z=0 to powierzchnia palety,
-    Z > 0 to przestrzen nad paleta. Szum SGBM przy powierzchni daje Z ~ +-noise_floor,
+    Z > 0 to przestrzen nad paleta. Szum SGBM przy powierzchni daje Z  +-noise_floor,
     wiec odcinamy dolny prog.
 
     Args:
@@ -135,15 +151,20 @@ def compute_bounding_box(xyz_object: np.ndarray) -> BoundingBox:
 def extract_3d_contour(xyz_object: np.ndarray) -> np.ndarray:
     """Wyznacza obrys konturowy obiektu jako convex hull w plaszczyznie XY.
 
+    Rzutuje punkty obiektu na plaszczyzne XY (ignorujac wysokosc Z)
+    i oblicza wypukla otoczke. Wynik nadaje sie do wizualizacji rzutu
+    z gory oraz do przyblizonych obliczen powierzchni podstawy obiektu.
+
     Args:
-        xyz_object: (M,3) punkty obiektu w ukladzie palety
+        xyz_object: (M,3) punkty obiektu w ukladzie palety [mm]
 
     Returns:
-        (K,2) wierzcholki wypuklego obrysu w ukladzie XY palety
+        (K,2) wierzcholki wypuklego obrysu w plaszczyznie XY [mm]
     """
     pts_2d = xyz_object[:, :2].astype(np.float32)
 
     if len(pts_2d) < 3:
+        # Za malo punktow na convex hull - zwracamy je bez zmian
         return pts_2d
 
     hull = cv2.convexHull(pts_2d)
@@ -174,9 +195,10 @@ def measure_object(
     Raises:
         RuntimeError: jesli brak punktow obiektu nad paleta
     """
-    # Punkty ROI w ukladzie palety
+    # Bierzemy tylko punkty wewnatrz ROI palety (juz w ukladzie palety)
     xyz_roi = pallet_result.xyz_pallet[pallet_result.roi_mask]
 
+    # Segmentujemy obiekt: punkty powyzej noise_floor to obiekt, reszta to szum lub paleta
     obj_mask = segment_object(xyz_roi, noise_floor_mm, max_height_mm)
 
     if obj_mask.sum() == 0:
@@ -238,7 +260,9 @@ def validate_measurement(
     if n_inliers < min_inliers:
         issues.append(f"Za malo inlierow RANSAC: {n_inliers} < {min_inliers}")
 
-    # Szacowanie pokrycia palety (rozstaw inlierow wzgledem wymiarow nominalnych)
+    # Szacowanie pokrycia palety: sprawdzamy, jaka czesc nominalnej powierzchni
+    # palety jest objeta przez inliery RANSAC. Niska wartość (<0.5) sugeruje,
+    # ze paleta jest czesciowo poza kadrem lub zaslonicta.
     inlier_pallet = result.pallet_result.xyz_pallet[result.pallet_result.plane.inlier_mask]
     x_span = float(inlier_pallet[:, 0].max() - inlier_pallet[:, 0].min()) if len(inlier_pallet) > 1 else 0.0
     y_span = float(inlier_pallet[:, 1].max() - inlier_pallet[:, 1].min()) if len(inlier_pallet) > 1 else 0.0
@@ -249,7 +273,9 @@ def validate_measurement(
     if not object_height_ok:
         issues.append(f"Nieprawidlowa wysokosc obiektu: {bbox.height:.0f} mm")
 
-    # Sprawdz czy obiekt nie wykracza znaczaco poza obrys ROI
+    # Tolerancja 20% pozwala na drobne bledy transformacji do ukladu palety
+    # i niewielkie wysuniecie obiektu poza krawedz. Przekroczenie sugeruje
+    # blad detekcji plaszczyzny lub zle ustawienie kamer.
     margin = 0.2  # 20% tolerancji
     half_w = pallet_width_mm / 2.0 * (1 + margin)
     half_l = pallet_length_mm / 2.0 * (1 + margin)
@@ -278,10 +304,13 @@ def validate_measurement(
 # ---------------------------------------------------------------------------
 
 def generate_report(result: MeasurementResult, validation: ValidationReport) -> str:
-    """Generuje tekstowy raport pomiaru obiektu (po polsku).
+    """Generuje tekstowy raport pomiaru obiektu gotowy do zapisu lub wyswietlenia.
+
+    Raport zawiera: timestamp, statystyki detekcji palety, wymiary obiektu
+    i wynik walidacji z lista ewentualnych problemow.
 
     Returns:
-        Wieloliniowy string gotowy do wyswietlenia lub zapisu do pliku
+        Wieloliniowy string zakonczony separatorem - gotowy do print() lub zapisu do pliku
     """
     sep = "=" * 60
     ts = time.strftime("%Y-%m-%d %H:%M:%S")

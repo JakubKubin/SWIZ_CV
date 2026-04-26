@@ -34,7 +34,7 @@ from measurement import (
 
 
 # ===========================================================================
-# POMOCNIK: syntetyczna scena paleta + pudelko
+# syntetyczna scena paleta + pudelko
 # ===========================================================================
 
 def _make_pallet_scene(
