@@ -1,0 +1,4 @@
+Tryb: real
+Blad reproj.: 1.7247 px
+|T| = 165.2 mm
+

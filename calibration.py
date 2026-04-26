@@ -175,6 +175,14 @@ def find_corners(image: np.ndarray) -> Optional[np.ndarray]:
     Probuje findChessboardCornersSB (subpixel wbudowany, lepszy dla wysokich
     rozdzielczosci), nastepnie wraca do findChessboardCorners + cornerSubPix.
     """
+    # Skaluj duze obrazy do max 1920px szerokosci
+    h, w = image.shape[:2]
+    scale = 1.0
+    if w > 1920:
+        scale = 1920 / w
+        image = cv2.resize(image, (1920, int(h * scale)))
+    
+    
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
 
     # Metoda SB: dokladniejsza, subpixel w jednym przejsciu, brak oddzielnego cornerSubPix
@@ -246,8 +254,17 @@ def collect_stereo_points(
         if l_img is None or r_img is None:
             log.warning("Nie mozna wczytac pary: %s, %s", lp, rp)
             continue
+
+        # Skaluj duze obrazy do max 1920px szerokosci
+        h, w = l_img.shape[:2]
+        if w > 1920:
+            scale = 1920 / w
+            l_img = cv2.resize(l_img, (1920, int(h * scale)))
+            r_img = cv2.resize(r_img, (1920, int(r_img.shape[0] * scale)))
+
         if img_size is None:
             img_size = (l_img.shape[1], l_img.shape[0])
+
         lc, rc = find_corners(l_img), find_corners(r_img)
         if lc is None or rc is None:
             log.warning("Brak naroznikow w parze: %s, %s", lp, rp)
@@ -259,7 +276,7 @@ def collect_stereo_points(
     log.info("Zgodnych par: %d/%d", len(obj_pts), len(left_paths))
     if not obj_pts:
         raise ValueError("Nie wykryto wzorca na zadnej parze obrazow")
-    assert img_size is not None  # ustawiane przy pierwszej poprawnej parze
+    assert img_size is not None
     return StereoCalibrationData(obj_pts, left_pts, right_pts, img_size)
 
 

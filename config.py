@@ -1,13 +1,15 @@
 # config.py
 import os
 import cv2
+from dotenv import load_dotenv
+load_dotenv()
 
 # ---------------------------------------------------------------------------
 # Szachownica kalibracyjna
 # ---------------------------------------------------------------------------
-BOARD_ROWS: int = int(os.environ.get("CHECKERBOARD_ROWS", 9))   # wewnetrzne narozniki (wiersze)
-BOARD_COLS: int = int(os.environ.get("CHECKERBOARD_COLS", 6))   # wewnetrzne narozniki (kolumny)
-SQUARE_SIZE_MM: float = float(os.environ.get("SQUARE_SIZE_MM", 25.0))  # rozmiar kwadratu [mm]
+BOARD_ROWS: int = int(os.environ.get("CHECKERBOARD_ROWS", 5))
+BOARD_COLS: int = int(os.environ.get("CHECKERBOARD_COLS", 8))
+SQUARE_SIZE_MM: float = float(os.environ.get("SQUARE_SIZE_MM", 15.0))  # rozmiar kwadratu [mm]
 
 # ---------------------------------------------------------------------------
 # Sciezki

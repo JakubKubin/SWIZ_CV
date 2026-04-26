@@ -186,6 +186,13 @@ def _sync_measure(session_id: str) -> MeasResult:
     if left_img is None or right_img is None:
         raise IOError(f"Nie mozna wczytac zdiec: {left_path}, {right_path}")
 
+    # Skaluj duze obrazy do max 1920px
+    h, w = left_img.shape[:2]
+    if w > 1920:
+        scale = 1920 / w
+        left_img  = cv2.resize(left_img,  (1920, int(h * scale)))
+        right_img = cv2.resize(right_img, (1920, int(right_img.shape[0] * scale)))
+
     # Etap 2-4: rektyfikacja, dysparycja, glebokos
     img_size = (left_img.shape[1], left_img.shape[0])
     left_rect, right_rect = rectify_pair(stereo, left_img, right_img, img_size)
