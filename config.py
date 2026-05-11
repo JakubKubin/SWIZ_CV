@@ -32,7 +32,7 @@ CALIB_OUTPUT: str = os.environ.get("CALIBRATION_OUTPUT", "./calib_output")
 # i filtrowania ROI — punkty spoza obrysu palety sa odrzucane.
 PALLET_WIDTH_MM: float = 1200.0
 PALLET_LENGTH_MM: float = 800.0
-PALLET_HEIGHT_MM: float = 144.0  # standardowa wysokosc palety 
+PALLET_HEIGHT_MM: float = 144.0  # standardowa wysokosc palety
 
 # ---------------------------------------------------------------------------
 # Progi jakosci kalibracji
@@ -44,7 +44,7 @@ MAX_STEREO_REPROJ_ERROR: float = 2.0   # [px] prog akceptacji dla kalibracji ste
 # ---------------------------------------------------------------------------
 # Parametry detekcji naroznikow szachownicy
 # ---------------------------------------------------------------------------
-# Okno 11x11 px 
+# Okno 11x11 px
 CORNER_SUBPIX_WIN: tuple[int, int] = (11, 11)
 # (-1, -1) oznacza brak strefy martwej wokol srodka okna
 CORNER_SUBPIX_ZERO_ZONE: tuple[int, int] = (-1, -1)
