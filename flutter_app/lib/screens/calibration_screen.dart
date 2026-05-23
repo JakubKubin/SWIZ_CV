@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -26,6 +27,9 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
   Timer? _countdownTimer;
   int _remainingMs = 0;
 
+  CameraController? _camController;
+  bool _camReady = false;
+
   @override
   void initState() {
     super.initState();
@@ -38,6 +42,7 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
   void dispose() {
     _appState.removeListener(_onStateChange);
     _countdownTimer?.cancel();
+    _camController?.dispose();
     super.dispose();
   }
 
@@ -53,6 +58,36 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
         _startCountdown();
       }
     });
+  }
+
+  Future<void> _initCamera() async {
+    try {
+      final cameras = await availableCameras();
+      if (cameras.isEmpty || !mounted) return;
+      final back = cameras.firstWhere(
+        (c) => c.lensDirection == CameraLensDirection.back,
+        orElse: () => cameras.first,
+      );
+      final ctrl = CameraController(back, ResolutionPreset.high, enableAudio: false);
+      await ctrl.initialize();
+      if (!mounted) {
+        await ctrl.dispose();
+        return;
+      }
+      setState(() {
+        _camController = ctrl;
+        _camReady = true;
+      });
+    } catch (e, st) {
+      _log.warn('Nie udało się zainicjować kamery', e, st);
+    }
+  }
+
+  Future<void> _disposeCamera() async {
+    final ctrl = _camController;
+    _camController = null;
+    _camReady = false;
+    await ctrl?.dispose();
   }
 
   void _startCountdown() {
@@ -74,6 +109,8 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
     }
 
     setState(() => _remainingMs = remainingMs());
+    if (!kIsWeb) _initCamera(); // initialize camera in background during countdown
+
     _countdownTimer = Timer.periodic(const Duration(milliseconds: 50), (t) {
       if (!mounted) {
         t.cancel();
@@ -83,14 +120,57 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
       if (remaining <= 0) {
         t.cancel();
         setState(() => _remainingMs = 0);
-        _captureAndUpload();
+        _autoCapture();
       } else {
         setState(() => _remainingMs = remaining);
       }
     });
   }
 
-  Future<void> _captureAndUpload() async {
+  /// Takes photo automatically using CameraController (no user interaction).
+  /// Falls back to image_picker if camera init failed (e.g., permission denied).
+  Future<void> _autoCapture() async {
+    if (_capturing) return;
+    setState(() => _capturing = true);
+    try {
+      final XFile xfile;
+      if (!kIsWeb && _camReady && _camController != null) {
+        xfile = await _camController!.takePicture();
+        _log.info('Automatyczne zdjęcie kalibracyjne wykonane');
+      } else {
+        _log.warn('Camera nie gotowa — fallback na image_picker');
+        final picked = await _picker.pickImage(
+          source: kIsWeb ? ImageSource.gallery : ImageSource.camera,
+          imageQuality: 90,
+        );
+        if (picked == null) {
+          _log.info('Zdjęcie kalibracyjne anulowane');
+          return;
+        }
+        xfile = picked;
+      }
+      final bytes = await xfile.readAsBytes();
+      final ok = await _appState.uploadCalibImageNow(bytes);
+      if (mounted && ok) {
+        final total = _appState.myDevice?.calibFrameCount ?? 0;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Klatka kalibracyjna przesłana — łącznie $total')),
+        );
+      }
+    } catch (e, st) {
+      _log.warn('Błąd automatycznego przechwytywania kalibracyjnego', e, st);
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Błąd aparatu: $e')));
+      }
+    } finally {
+      await _disposeCamera();
+      if (mounted) setState(() => _capturing = false);
+    }
+  }
+
+  /// Manual capture via image_picker — user presses shutter themselves.
+  Future<void> _manualCapture() async {
     if (_capturing) return;
     setState(() => _capturing = true);
     try {
@@ -99,7 +179,7 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
         imageQuality: 90,
       );
       if (xfile == null) {
-        _log.info('Zdjęcie kalibracyjne anulowane przez użytkownika');
+        _log.info('Ręczne zdjęcie kalibracyjne anulowane');
         return;
       }
       final bytes = await xfile.readAsBytes();
@@ -111,7 +191,7 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
         );
       }
     } catch (e, st) {
-      _log.warn('Błąd podczas przechwytywania klatki kalibracyjnej', e, st);
+      _log.warn('Błąd ręcznego przechwytywania kalibracyjnego', e, st);
       if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('Błąd aparatu: $e')));
@@ -140,8 +220,9 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
 
     final minFrames = session?.minCalibFrames ?? 0;
     final canCalibrate = state.isLeader && minFrames >= 3;
-    final busy = _capturing || state.isLoading;
+    final busy = _capturing || state.isLoading || !state.wsConnected;
     final isCountingDown = _remainingMs > 0;
+    final showCapturePanel = isCountingDown || _capturing;
 
     return Scaffold(
       appBar: AppBar(
@@ -164,37 +245,66 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
             onClearInfo: state.clearInfo,
           ),
 
-          // Countdown display
-          if (isCountingDown)
+          // Camera preview + countdown / upload indicator
+          if (showCapturePanel)
             Card(
-              child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
-                child: Column(
-                  children: [
-                    Text('Przygotuj szachownicę',
-                        style: tt.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 12),
-                    Text(
-                      '${(_remainingMs / 1000.0).toStringAsFixed(1)} s',
-                      style: const TextStyle(
-                        fontSize: 64,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.warning,
-                        letterSpacing: -2,
-                      ),
+              clipBehavior: Clip.antiAlias,
+              child: Column(
+                children: [
+                  if (!kIsWeb)
+                    SizedBox(
+                      height: 260,
+                      width: double.infinity,
+                      child: _camReady && _camController != null
+                          ? CameraPreview(_camController!)
+                          : Container(
+                              color: Colors.black,
+                              child: const Center(
+                                child: CircularProgressIndicator(
+                                    color: Colors.white),
+                              ),
+                            ),
                     ),
-                    const SizedBox(height: 8),
-                    Text('Aparat zostanie uruchomiony automatycznie',
-                        style:
-                            tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
-                  ],
-                ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                        vertical: 16, horizontal: 16),
+                    child: _capturing
+                        ? Column(
+                            children: [
+                              const CircularProgressIndicator(),
+                              const SizedBox(height: 8),
+                              Text('Wysyłanie…',
+                                  style: tt.bodySmall
+                                      ?.copyWith(color: cs.onSurfaceVariant)),
+                            ],
+                          )
+                        : Column(
+                            children: [
+                              Text('Przygotuj szachownicę',
+                                  style: tt.titleMedium?.copyWith(
+                                      fontWeight: FontWeight.w600)),
+                              const SizedBox(height: 8),
+                              Text(
+                                '${(_remainingMs / 1000.0).toStringAsFixed(1)} s',
+                                style: const TextStyle(
+                                  fontSize: 56,
+                                  fontWeight: FontWeight.bold,
+                                  color: AppColors.warning,
+                                  letterSpacing: -2,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text('Zdjęcie zostanie wykonane automatycznie',
+                                  style: tt.bodySmall
+                                      ?.copyWith(color: cs.onSurfaceVariant)),
+                            ],
+                          ),
+                  ),
+                ],
               ),
             ),
 
-          if (!isCountingDown) ...[
+          if (!showCapturePanel) ...[
             // Instructions
             Card(
               child: Padding(
@@ -262,8 +372,7 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
                             ClipRRect(
                               borderRadius: BorderRadius.circular(4),
                               child: LinearProgressIndicator(
-                                value:
-                                    (d.calibFrameCount / 10.0).clamp(0.0, 1.0),
+                                value: (d.calibFrameCount / 10.0).clamp(0.0, 1.0),
                                 minHeight: 6,
                                 backgroundColor: cs.surfaceContainerHighest,
                               ),
@@ -274,8 +383,7 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
                       ),
                     Text(
                       'Minimum klatek (wszystkie urządzenia): $minFrames',
-                      style:
-                          tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
+                      style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
                     ),
                   ],
                 ),
@@ -284,17 +392,34 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
 
             const SizedBox(height: 12),
 
+            // WS connectivity warning
+            if (!state.wsConnected) ...[
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 10),
+                  child: Row(
+                    children: [
+                      Icon(Icons.wifi_off, size: 16, color: cs.error),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'WebSocket rozłączony — poczekaj na reconnect',
+                          style: tt.bodySmall?.copyWith(color: cs.error),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+
             // Synchronized trigger (leader) or waiting card (follower)
             if (state.isLeader)
               ElevatedButton.icon(
                 onPressed: busy ? null : () => state.triggerCalibCapture(delayMs: 3000),
-                icon: busy
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.camera_alt_outlined),
+                icon: const Icon(Icons.camera_alt_outlined),
                 label: const Text('Zrób klatkę kalibracyjną (3 s odliczanie)'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.stateProcessing,
@@ -304,16 +429,16 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
             else
               Card(
                 child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 12),
                   child: Row(
                     children: [
                       Icon(Icons.info_outline,
                           size: 16, color: cs.onSurfaceVariant),
                       const SizedBox(width: 8),
                       Text('Oczekiwanie na trigger lidera…',
-                          style:
-                              tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+                          style: tt.bodySmall
+                              ?.copyWith(color: cs.onSurfaceVariant)),
                     ],
                   ),
                 ),
@@ -323,7 +448,7 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
 
             // Manual single-shot fallback
             OutlinedButton.icon(
-              onPressed: busy ? null : _captureAndUpload,
+              onPressed: busy ? null : _manualCapture,
               icon: const Icon(Icons.add_a_photo_outlined),
               label: const Text('Ręczne zdjęcie'),
             ),
@@ -358,16 +483,16 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
             else
               Card(
                 child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 12),
                   child: Row(
                     children: [
                       Icon(Icons.info_outline,
                           size: 16, color: cs.onSurfaceVariant),
                       const SizedBox(width: 8),
                       Text('Kalibrację uruchamia lider sesji',
-                          style:
-                              tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+                          style: tt.bodySmall
+                              ?.copyWith(color: cs.onSurfaceVariant)),
                     ],
                   ),
                 ),

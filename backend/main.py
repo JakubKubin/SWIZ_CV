@@ -577,6 +577,16 @@ async def measure_synthetic():
 # WEBSOCKET
 # ===========================================================================
 
+async def _ws_keepalive(ws: WebSocket, interval: float = 20.0) -> None:
+    """Sends periodic server-side pings to prevent proxy/NAT idle timeout."""
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            await ws.send_json({"event": "ping"})
+        except Exception:
+            return
+
+
 @app.websocket("/ws/{session_id}/{device_id}")
 async def websocket_endpoint(ws: WebSocket, session_id: str, device_id: str):
     """Kanal WebSocket dla synchronizacji urzadzen w czasie rzeczywistym.
@@ -622,6 +632,7 @@ async def websocket_endpoint(ws: WebSocket, session_id: str, device_id: str):
         "device_id": device_id,
     })
 
+    keepalive_task = asyncio.create_task(_ws_keepalive(ws))
     try:
         while True:
             data = await ws.receive_json()
@@ -647,6 +658,7 @@ async def websocket_endpoint(ws: WebSocket, session_id: str, device_id: str):
         log.warning("[%s] WS blad %s: %s", session_id, device_id, exc)
 
     finally:
+        keepalive_task.cancel()
         ws_manager.disconnect(session_id, device_id)
         if device_id in session.devices:
             session.devices[device_id].ws_connected = False

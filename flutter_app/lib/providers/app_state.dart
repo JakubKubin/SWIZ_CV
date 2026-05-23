@@ -431,6 +431,9 @@ class AppState extends ChangeNotifier {
     }
 
     switch (event) {
+      case 'ping':
+        return; // server keepalive — no state change
+
       case 'pong':
         final st = (msg['t'] as num?)?.toDouble() ?? 0.0;
         serverTimeOffset = st - DateTime.now().millisecondsSinceEpoch / 1000.0;
