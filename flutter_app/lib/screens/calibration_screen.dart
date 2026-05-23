@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
+import '../utils/log.dart';
 import '../widgets/app_banner.dart';
 
 class CalibrationScreen extends StatefulWidget {
@@ -17,6 +18,8 @@ class CalibrationScreen extends StatefulWidget {
 }
 
 class _CalibrationScreenState extends State<CalibrationScreen> {
+  static const _log = Log('CalibrationScreen');
+
   final _picker = ImagePicker();
   bool _picking = false;
 
@@ -24,13 +27,18 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
     setState(() => _picking = true);
     try {
       final files = await _picker.pickMultiImage(imageQuality: 90);
-      if (files.isEmpty) return;
+      if (files.isEmpty) {
+        _log.info('Wybór z galerii anulowany (0 plików)');
+        return;
+      }
       final loaded = <({Uint8List bytes, String name})>[];
       for (final f in files) {
         loaded.add((bytes: await f.readAsBytes(), name: f.name));
       }
       state.addPendingCalibImages(loaded);
-    } catch (e) {
+      _log.info('Dodano ${loaded.length} obrazów kalibracyjnych z galerii');
+    } catch (e, st) {
+      _log.warn('Błąd wyboru obrazów z galerii', e, st);
       if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('Błąd: $e')));
@@ -47,11 +55,16 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
         source: ImageSource.camera,
         imageQuality: 90,
       );
-      if (file == null) return;
+      if (file == null) {
+        _log.info('Robienie zdjęcia kalibracyjnego anulowane');
+        return;
+      }
       state.addPendingCalibImages([
         (bytes: await file.readAsBytes(), name: file.name),
       ]);
-    } catch (e) {
+      _log.info('Dodano zdjęcie kalibracyjne z aparatu');
+    } catch (e, st) {
+      _log.warn('Błąd aparatu przy zdjęciu kalibracyjnym', e, st);
       if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('Błąd aparatu: $e')));

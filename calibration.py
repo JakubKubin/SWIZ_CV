@@ -21,8 +21,9 @@ import numpy as np
 import cv2
 
 import config
+from logging_setup import setup_logging
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+setup_logging()
 log = logging.getLogger(__name__)
 
 # Lokalne aliasy stalych z config - skracaja zapis w calym module
@@ -335,6 +336,12 @@ def collect_points(image_paths: list[str]) -> CalibrationData:
         img_points.append(corners)
         log.info("OK: %s", path)
     log.info("Znaleziono wzorzec w %d/%d obrazach", len(img_points), len(image_paths))
+    # Duzy odsetek odrzuconych klatek = problem z wzorcem (rozmiar BOARD_ROWS/COLS,
+    # oswietlenie, rozmycie) - sygnalizujemy, bo czesto to przyczyna slabej kalibracji.
+    if image_paths and len(img_points) < 0.5 * len(image_paths):
+        log.warning("Odrzucono %d/%d klatek - sprawdz rozmiar szachownicy (%dx%d), "
+                    "oswietlenie i ostrosc", len(image_paths) - len(img_points),
+                    len(image_paths), BOARD_ROWS, BOARD_COLS)
     if not img_points:
         raise ValueError("Nie wykryto wzorca na zadnym obrazie")
     assert img_size is not None  # ustawiane przy pierwszym poprawnym obrazie
@@ -386,6 +393,12 @@ def collect_stereo_points(
         right_pts.append(rc)
         log.info("OK para: %s | %s", lp, rp)
     log.info("Zgodnych par: %d/%d", len(obj_pts), len(left_paths))
+    # Para jest uzyteczna tylko gdy OBIE kamery widza wzorzec - duzo niekompletnych
+    # par oznacza zly kadr jednej z kamer lub niezsynchronizowane ujecia.
+    if left_paths and len(obj_pts) < 0.5 * len(left_paths):
+        log.warning("Odrzucono %d/%d par (wzorzec niewidoczny w obu kamerach) - "
+                    "sprawdz czy szachownica miesci sie w obu kadrach",
+                    len(left_paths) - len(obj_pts), len(left_paths))
     if not obj_pts:
         raise ValueError("Nie wykryto wzorca na zadnej parze obrazow")
     assert img_size is not None
@@ -404,7 +417,7 @@ def _calibrate_from_data(data: CalibrationData) -> CameraParams:
     Jako punkt startowy przekazujemy macierz jednostkowa i zerowe dystorsje -
     OpenCV sam wyznacza poczatkowe przyblizenie metoda DLT.
 
-    
+
     """
     if len(data) < config.MIN_CALIBRATION_IMAGES:
         raise ValueError(
@@ -414,7 +427,13 @@ def _calibrate_from_data(data: CalibrationData) -> CameraParams:
     rms, mtx, dist, _, _ = cv2.calibrateCamera(
         data.obj_points, data.img_points, data.image_size, np.eye(3), np.zeros(5)
     )
-    log.info("RMS reproj. error: %.4f px", rms)
+    log.info("RMS reproj. error: %.4f px (%d klatek, rozdz. %dx%d)",
+             rms, len(data), data.image_size[0], data.image_size[1])
+    # Wysoki RMS pojedynczej kamery (>1 px) zwykle oznacza nieostre zdjecia,
+    # zle wykryte narozniki lub zbyt malo roznorodnych poz szachownicy.
+    if rms > 1.0:
+        log.warning("Wysoki RMS kalibracji kamery: %.4f px (>1 px) - sprawdz ostrosc "
+                    "i roznorodnosc ujec szachownicy", rms)
     return CameraParams(
         camera_matrix=mtx, dist_coeffs=dist, reproj_error=rms, image_size=data.image_size
     )

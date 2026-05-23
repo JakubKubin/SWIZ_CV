@@ -50,8 +50,9 @@ from pointcloud import (
 )
 from pallet import detect_pallet
 from measurement import measure_object, validate_measurement, generate_report
+from logging_setup import setup_logging
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+setup_logging()
 log = logging.getLogger(__name__)
 
 

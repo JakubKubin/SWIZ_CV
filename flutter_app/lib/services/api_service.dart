@@ -6,8 +6,11 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
 import '../models/models.dart';
+import '../utils/log.dart';
 
 class ApiService {
+  static const _log = Log('ApiService');
+
   final String baseUrl;
 
   const ApiService(this.baseUrl);
@@ -24,8 +27,22 @@ class ApiService {
       } catch (_) {
         detail = r.body;
       }
+      final req = r.request;
+      _log.warn('HTTP ${r.statusCode} ${req?.method} ${req?.url}: $detail');
       throw ApiException(r.statusCode, detail);
     }
+  }
+
+  /// Obsługa błędów dla odpowiedzi multipart (streamed) - loguje i rzuca.
+  Never _failMultipart(int statusCode, String method, Uri url, String body) {
+    String detail;
+    try {
+      detail = jsonDecode(body)['detail'] as String? ?? body;
+    } catch (_) {
+      detail = body;
+    }
+    _log.warn('HTTP $statusCode $method $url: $detail');
+    throw ApiException(statusCode, detail);
   }
 
   Uri _uri(String path) => Uri.parse('$baseUrl$path');
@@ -39,8 +56,12 @@ class ApiService {
       final r = await http
           .get(_uri('/health'))
           .timeout(const Duration(seconds: 5));
+      if (r.statusCode != 200) {
+        _log.warn('Health check zwrócił HTTP ${r.statusCode} ($baseUrl)');
+      }
       return r.statusCode == 200;
-    } catch (_) {
+    } catch (e, st) {
+      _log.warn('Health check nie powiódł się ($baseUrl)', e, st);
       return false;
     }
   }
@@ -106,20 +127,15 @@ class ApiService {
     String deviceId,
     Uint8List bytes,
   ) async {
-    final req = http.MultipartRequest('POST', _uri('/sessions/$sid/calibration/images'));
+    final url = _uri('/sessions/$sid/calibration/images');
+    final req = http.MultipartRequest('POST', url);
     req.fields['device_id'] = deviceId;
     req.files.add(http.MultipartFile.fromBytes('file', bytes, filename: 'frame.jpg'));
 
     final streamed = await req.send();
     final body = await streamed.stream.bytesToString();
     if (streamed.statusCode >= 400) {
-      String detail;
-      try {
-        detail = jsonDecode(body)['detail'] as String? ?? body;
-      } catch (_) {
-        detail = body;
-      }
-      throw ApiException(streamed.statusCode, detail);
+      _failMultipart(streamed.statusCode, 'POST', url, body);
     }
     return jsonDecode(body) as Map<String, dynamic>;
   }
@@ -154,20 +170,15 @@ class ApiService {
     String deviceId,
     Uint8List bytes,
   ) async {
-    final req = http.MultipartRequest('POST', _uri('/sessions/$sid/capture/images'));
+    final url = _uri('/sessions/$sid/capture/images');
+    final req = http.MultipartRequest('POST', url);
     req.fields['device_id'] = deviceId;
     req.files.add(http.MultipartFile.fromBytes('file', bytes, filename: 'capture.jpg'));
 
     final streamed = await req.send();
     final body = await streamed.stream.bytesToString();
     if (streamed.statusCode >= 400) {
-      String detail;
-      try {
-        detail = jsonDecode(body)['detail'] as String? ?? body;
-      } catch (_) {
-        detail = body;
-      }
-      throw ApiException(streamed.statusCode, detail);
+      _failMultipart(streamed.statusCode, 'POST', url, body);
     }
     return jsonDecode(body) as Map<String, dynamic>;
   }

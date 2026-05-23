@@ -137,6 +137,15 @@ def compute_disparity(
     if cfg is None:
         cfg = SGBMConfig()
 
+    log.debug("SGBM cfg: num_disp=%d block=%d uniq=%d speckle_win=%d mode=%d",
+              cfg.num_disparities, cfg.block_size, cfg.uniqueness, cfg.speckle_window, cfg.mode)
+
+    # SGBM wymaga identycznych rozmiarow obrazow - rozne rozmiary daja smieciowa
+    # dysparycje lub blad OpenCV. Ostrzegamy, bo to typowy efekt zlej rektyfikacji.
+    if left_rect.shape[:2] != right_rect.shape[:2]:
+        log.warning("SGBM: rozne rozmiary obrazow L=%s R=%s - dysparycja bedzie bledna",
+                    left_rect.shape[:2], right_rect.shape[:2])
+
     # SGBM operuje na jednokanałowych obrazach szaroskalowych - kolor nie wnosi
     # dodatkowej informacji do porownywania bloków pikseli miedzy obrazami
     gray_l = cv2.cvtColor(left_rect,  cv2.COLOR_BGR2GRAY) if left_rect.ndim  == 3 else left_rect
@@ -167,10 +176,23 @@ def compute_disparity(
 
     valid_px = int((disp_float > 0).sum())
     total_px = disp_float.size
+    coverage = 100 * valid_px / total_px
     log.info("Dysparycja: zakres [%.1f, %.1f] px, waznych pikseli: %d/%d (%.0f%%)",
              float(disp_float[disp_float > 0].min()) if valid_px else 0,
              float(disp_float.max()),
-             valid_px, total_px, 100 * valid_px / total_px)
+             valid_px, total_px, coverage)
+    if valid_px == 0:
+        log.warning("Dysparycja: 0 waznych pikseli - brak dopasowan SGBM "
+                    "(sprawdz rektyfikacje, oswietlenie, num_disparities=%d)", cfg.num_disparities)
+    elif coverage < 10.0:
+        log.warning("Dysparycja: niskie pokrycie %.0f%% - gladka/jednolita scena lub "
+                    "zla rektyfikacja; chmura punktow bedzie rzadka", coverage)
+    # Wartosci blisko gornego progu sugeruja, ze obiekty sa blizej niz zaklada
+    # num_disparities - czesc dysparycji moze byc obcieta (utrata bliskich punktow).
+    if valid_px and float(disp_float.max()) >= cfg.num_disparities - 1:
+        log.warning("Dysparycja: max=%.1f px blisko limitu num_disparities=%d - "
+                    "bliskie obiekty moga byc obciete, rozwaz wieksze num_disparities",
+                    float(disp_float.max()), cfg.num_disparities)
     return disp_float
 
 
@@ -203,6 +225,11 @@ def disparity_to_depth(
     points_3d = cv2.reprojectImageTo3D(disparity, Q)   # (H, W, 3) -> X, Y, Z [mm]
     depth_mm = points_3d[:, :, 2].copy()
 
+    # Liczymy ile pikseli odpada na kazdym kroku - pomaga zdiagnozowac,
+    # czy dane gina przez brak dysparycji, czy przez prog max_depth_mm.
+    n_disp = int((disparity > 0).sum())
+    too_far = int(((disparity > 0) & (depth_mm > max_depth_mm)).sum())
+
     # Zerujemy piksele bez dysparycji oraz te poza zakresem pomiarowym.
     # Wartosc 0 sluzy jako znacznik "brak danych" na mapie glebokosci.
     no_data = (disparity <= 0) | (depth_mm <= 0) | (depth_mm > max_depth_mm)
@@ -210,8 +237,16 @@ def disparity_to_depth(
 
     valid = depth_mm[depth_mm > 0]
     if valid.size > 0:
-        log.info("Glebokos: min=%.0f mm, max=%.0f mm, mediana=%.0f mm",
-                 float(valid.min()), float(valid.max()), float(np.median(valid)))
+        log.info("Glebokos: min=%.0f mm, max=%.0f mm, mediana=%.0f mm (%d pkt)",
+                 float(valid.min()), float(valid.max()), float(np.median(valid)), valid.size)
+    else:
+        log.warning("Glebokos: 0 waznych pikseli (dysparycja>0: %d, odrzucone jako >%.0f mm: %d) - "
+                    "sprawdz macierz Q i prog max_depth_mm", n_disp, max_depth_mm, too_far)
+    # Duzy udzial pikseli obcietych progiem to sygnal zlej skali Q lub za niskiego progu.
+    if n_disp and too_far > 0.5 * n_disp:
+        log.warning("Glebokos: %d/%d pikseli (%.0f%%) przekracza max_depth=%.0f mm - "
+                    "mozliwa zla skala macierzy Q lub za niski prog",
+                    too_far, n_disp, 100 * too_far / n_disp, max_depth_mm)
     return depth_mm.astype(np.float32)
 
 
@@ -280,8 +315,9 @@ def draw_epipolar_check(left_rect: np.ndarray, right_rect: np.ndarray,
 
 if __name__ == "__main__":
     import argparse
+    from logging_setup import setup_logging
 
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    setup_logging()
 
     parser = argparse.ArgumentParser(description="Mapa dysparycji i glebokosci")
     parser.add_argument("--calib",  default="calib_output/stereo.json",

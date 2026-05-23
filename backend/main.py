@@ -50,7 +50,9 @@ from .schemas import (
 from .session import store, SessionState
 from .tasks import ws_manager, calibrate_session, measure_session, synthetic_measure
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+from logging_setup import setup_logging
+
+setup_logging()
 log = logging.getLogger(__name__)
 
 

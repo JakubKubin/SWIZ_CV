@@ -51,20 +51,31 @@ class WSManager:
 
     async def send(self, session_id: str, device_id: str, payload: dict) -> None:
         ws = self._conns.get((session_id, device_id))
-        if ws:
-            try:
-                await ws.send_json(payload)
-            except Exception as e:
-                log.debug("WS send error [%s/%s]: %s", session_id, device_id, e)
+        if ws is None:
+            log.warning("WS send: brak aktywnego polaczenia [%s/%s] dla event=%s",
+                        session_id, device_id, payload.get("event"))
+            return
+        try:
+            await ws.send_json(payload)
+        except Exception as e:
+            log.warning("WS send blad [%s/%s] event=%s: %s",
+                        session_id, device_id, payload.get("event"), e)
 
     async def broadcast(self, session_id: str, payload: dict) -> None:
         """Wysyla wiadomosc do wszystkich urzadzen w sesji."""
-        targets = [ws for (sid, _), ws in self._conns.items() if sid == session_id]
-        if targets:
-            await asyncio.gather(
-                *(ws.send_json(payload) for ws in targets),
-                return_exceptions=True,
-            )
+        targets = [(did, ws) for (sid, did), ws in self._conns.items() if sid == session_id]
+        if not targets:
+            log.warning("WS broadcast [%s] event=%s: brak odbiorcow (0 polaczen)",
+                        session_id, payload.get("event"))
+            return
+        results = await asyncio.gather(
+            *(ws.send_json(payload) for _, ws in targets),
+            return_exceptions=True,
+        )
+        for (did, _), result in zip(targets, results):
+            if isinstance(result, Exception):
+                log.warning("WS broadcast blad [%s/%s] event=%s: %s",
+                            session_id, did, payload.get("event"), result)
 
 
 ws_manager = WSManager()

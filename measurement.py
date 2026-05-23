@@ -127,7 +127,15 @@ def segment_object(
         (N,) bool - True dla punktow obiektu
     """
     z = xyz_pallet[:, 2]
-    return (z > noise_floor_mm) & (z < max_height_mm)
+    mask = (z > noise_floor_mm) & (z < max_height_mm)
+    # Rozbijamy odrzucone punkty na "ponizej progu szumu" i "ponad limitem wysokosci",
+    # zeby od razu bylo widac, czy obiekt zniknal przez za wysoki noise_floor,
+    # czy przez latajace punkty ponad max_height.
+    below = int((z <= noise_floor_mm).sum())
+    above = int((z >= max_height_mm).sum())
+    log.debug("Segmentacja: %d/%d pkt jako obiekt (ponizej %.0f mm: %d, ponad %.0f mm: %d)",
+              int(mask.sum()), len(z), noise_floor_mm, below, max_height_mm, above)
+    return mask
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +160,13 @@ def compute_bounding_box(xyz_object: np.ndarray) -> BoundingBox:
     x_min, x_max = float(xyz_object[:, 0].min()), float(xyz_object[:, 0].max())
     y_min, y_max = float(xyz_object[:, 1].min()), float(xyz_object[:, 1].max())
     z_min, z_max = float(xyz_object[:, 2].min()), float(xyz_object[:, 2].max())
+
+    # Wymiar bliski 0 oznacza zwykle, ze obiekt zredukowal sie do cienkiej warstwy
+    # punktow (zla segmentacja) - sygnalizujemy, bo objetosc bedzie wtedy bezuzyteczna.
+    w, l, h = x_max - x_min, y_max - y_min, z_max - z_min
+    if min(w, l, h) < 1.0:
+        log.warning("Bounding box ma znikomy wymiar: W=%.1f L=%.1f H=%.1f mm - "
+                    "prawdopodobnie zla segmentacja obiektu", w, l, h)
 
     return BoundingBox(
         x_min=x_min, x_max=x_max,
@@ -327,6 +342,8 @@ def measure_object(
     """
     # Bierzemy tylko punkty wewnatrz ROI palety (juz w ukladzie palety)
     xyz_roi = pallet_result.xyz_pallet[pallet_result.roi_mask]
+    log.debug("measure_object: %d punktow w ROI palety (z %d w chmurze)",
+              len(xyz_roi), len(pallet_result.xyz_pallet))
 
     # Segmentujemy obiekt: punkty powyzej noise_floor to obiekt, reszta to szum lub paleta
     obj_mask = segment_object(xyz_roi, noise_floor_mm, max_height_mm)
@@ -338,6 +355,10 @@ def measure_object(
         )
 
     object_pts = xyz_roi[obj_mask]
+    # Mala liczba punktow daje niestabilny bbox i objetosc - ostrzegamy, ale liczymy dalej.
+    if len(object_pts) < 50:
+        log.warning("Obiekt ma tylko %d punktow - wymiary i objetosc moga byc niedokladne",
+                    len(object_pts))
     bbox = compute_bounding_box(object_pts)
     volume = estimate_volume(object_pts, bbox)
     contour_pts = extract_3d_contour(object_pts)
@@ -419,6 +440,16 @@ def validate_measurement(
         issues.append("Obiekt wykracza poza obrys palety (>20% tolerancji)")
 
     passed = len(issues) == 0
+
+    # Logujemy wynik walidacji - kazdy problem jako osobne ostrzezenie ulatwia
+    # zlokalizowanie przyczyny w logach bez czytania calego raportu tekstowego.
+    if passed:
+        log.info("Walidacja pomiaru: PASS (RMS=%.1f mm, inliery=%d, pokrycie=%.0f%%)",
+                 rms, n_inliers, 100 * coverage)
+    else:
+        log.warning("Walidacja pomiaru: FAIL - %d problem(ow):", len(issues))
+        for issue in issues:
+            log.warning("  - %s", issue)
 
     return ValidationReport(
         pallet_plane_rms_mm=rms,

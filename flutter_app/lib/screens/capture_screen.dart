@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
+import '../utils/log.dart';
 import '../widgets/app_banner.dart';
 
 class CaptureScreen extends StatefulWidget {
@@ -17,6 +18,8 @@ class CaptureScreen extends StatefulWidget {
 }
 
 class _CaptureScreenState extends State<CaptureScreen> {
+  static const _log = Log('CaptureScreen');
+
   final _picker = ImagePicker();
   late final AppState _appState;
   bool _uploading = false;
@@ -68,6 +71,8 @@ class _CaptureScreenState extends State<CaptureScreen> {
     // Ignoruj nieaktualne wyzwolenia (np. odebrane gdy ekran był zamknięty) -
     // nie otwieramy automatycznie aparatu dla momentu, który już minął.
     if (remainingMs() <= 0) {
+      _log.warn('Pominięto nieaktualny trigger przechwycenia '
+          '(at=$triggerAt, offset=$offset, remaining=${remainingMs()}ms)');
       setState(() => _remainingMs = 0);
       return;
     }
@@ -104,7 +109,8 @@ class _CaptureScreenState extends State<CaptureScreen> {
           imageQuality: 90,
         );
       }
-    } catch (e) {
+    } catch (e, st) {
+      _log.warn('Błąd aparatu przy przechwytywaniu zdjęcia (kIsWeb=$kIsWeb)', e, st);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Błąd aparatu: $e')),
@@ -112,7 +118,10 @@ class _CaptureScreenState extends State<CaptureScreen> {
       }
       return;
     }
-    if (xfile == null) return;
+    if (xfile == null) {
+      _log.info('Przechwytywanie anulowane przez użytkownika (brak pliku)');
+      return;
+    }
 
     setState(() => _uploading = true);
     final bytes = await xfile.readAsBytes();

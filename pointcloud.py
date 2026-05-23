@@ -73,6 +73,15 @@ def build_pointcloud(
 
     xyz = points_3d[mask].astype(np.float32)  # (N, 3) - tylko wazne punkty
 
+    # Diagnostyka odrzuconych punktow: rozdzielamy powody, by latwiej zlokalizowac
+    # problem (brak dysparycji vs. obciecie zakresem glebokosci).
+    z = points_3d[:, :, 2]
+    has_disp = disparity > 0
+    finite = has_disp & np.isfinite(z)
+    n_disp = int(has_disp.sum())
+    n_near = int((finite & (z <= min_depth_mm)).sum())
+    n_far = int((finite & (z >= max_depth_mm)).sum())
+
     colors = None
     if color_image is not None:
         # OpenCV przechowuje obrazy w formacie BGR; konwertujemy do RGB
@@ -80,9 +89,20 @@ def build_pointcloud(
         rgb = cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB) if color_image.ndim == 3 else \
               cv2.cvtColor(color_image, cv2.COLOR_GRAY2RGB)
         colors = rgb[mask]  # (N, 3) uint8
+    elif color_image is None:
+        log.debug("build_pointcloud: brak color_image - chmura bez kolorow")
 
-    log.info("Chmura punktow: %d punktow (maska %.1f%% pikseli)",
-             len(xyz), 100 * mask.sum() / mask.size)
+    log.info("Chmura punktow: %d punktow (maska %.1f%% pikseli, zakres %.0f-%.0f mm)",
+             len(xyz), 100 * mask.sum() / mask.size, min_depth_mm, max_depth_mm)
+    log.debug("Odrzucono: razem=%d, za blisko <=%.0f mm=%d, za daleko >=%.0f mm=%d",
+              n_disp - len(xyz), min_depth_mm, n_near, max_depth_mm, n_far)
+    if len(xyz) == 0:
+        log.warning("Chmura punktow PUSTA - brak punktow 3D w zakresie %.0f-%.0f mm "
+                    "(dysparycja>0: %d). Sprawdz dysparycje, macierz Q i progi glebokosci.",
+                    min_depth_mm, max_depth_mm, n_disp)
+    elif len(xyz) < 100:
+        log.warning("Chmura punktow bardzo rzadka: %d punktow - detekcja palety moze sie nie udac",
+                    len(xyz))
     return xyz, colors
 
 
@@ -145,8 +165,14 @@ def filter_pointcloud(
         min_dist[i:i+CHUNK] = dist.min(axis=1)
 
     keep = min_dist < thresh
-    log.info("Filtr statystyczny: zachowano %d/%d punktow (%.0f%%)",
-             keep.sum(), len(xyz), 100 * keep.mean())
+    kept_pct = 100 * keep.mean()
+    log.info("Filtr statystyczny: zachowano %d/%d punktow (%.0f%%, prog=%.1f mm)",
+             keep.sum(), len(xyz), kept_pct, thresh)
+    # Usuniecie wiekszosci punktow oznacza zwykle silnie poszarpana chmure
+    # (slaba tekstura / zla rektyfikacja) - dane wyjsciowe moga byc niewiarygodne.
+    if kept_pct < 50.0:
+        log.warning("Filtr statystyczny usunal %.0f%% punktow - chmura bardzo zaszumiona, "
+                    "wyniki pomiaru moga byc niepewne", 100 - kept_pct)
 
     return xyz[keep], (colors[keep] if colors is not None else None)
 
@@ -283,8 +309,9 @@ def render_sideview(
 
 if __name__ == "__main__":
     import argparse
+    from logging_setup import setup_logging
 
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    setup_logging()
 
     parser = argparse.ArgumentParser(description="Generowanie chmury punktow 3D")
     parser.add_argument("--calib",      default="calib_output/stereo.json")

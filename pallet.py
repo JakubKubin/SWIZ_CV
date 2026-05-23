@@ -90,10 +90,13 @@ def detect_pallet_plane(
 
     rng = np.random.RandomState(rng_seed)
     n = len(xyz)
+    log.debug("RANSAC start: %d punktow, %d iteracji, prog=%.1f mm, min_inliers=%d",
+              n, n_iterations, distance_threshold, min_inliers)
 
     best_inlier_count = 0
     best_normal = None
     best_d = None
+    n_degenerate = 0  # iteracje odrzucone z powodu wspoliniowych punktow
 
     for _ in range(n_iterations):
         # Losujemy 3 rozne punkty - minimalna liczba do wyznaczenia plaszczyzny
@@ -105,6 +108,7 @@ def detect_pallet_plane(
         norm_len = np.linalg.norm(normal)
         if norm_len < 1e-9:
             # Punkty sa wspoliniowe - pomijamy ta iteracje
+            n_degenerate += 1
             continue
         normal = normal / norm_len
         d = -np.dot(normal, p0)
@@ -117,6 +121,11 @@ def detect_pallet_plane(
             best_inlier_count = inlier_count
             best_normal = normal
             best_d = d
+
+    # Duzy udzial zdegenerowanych iteracji sugeruje chmure prawie wspoliniowa/rzadka.
+    if n_degenerate > 0.5 * n_iterations:
+        log.warning("RANSAC: %d/%d iteracji zdegenerowanych (wspoliniowe punkty) - "
+                    "chmura moze byc zbyt rzadka lub plaska", n_degenerate, n_iterations)
 
     if best_inlier_count < min_inliers:
         raise RuntimeError(
@@ -152,10 +161,20 @@ def detect_pallet_plane(
     inlier_pts_final = xyz[inlier_mask]
     rms = float(np.sqrt((residuals[inlier_mask] ** 2).mean()))
 
+    inlier_ratio = inlier_mask.mean()
     log.info(
-        "RANSAC: znaleziono plaszczyzne, %d inlierow (%.1f%%), RMS=%.2f mm",
-        inlier_mask.sum(), 100 * inlier_mask.mean(), rms,
+        "RANSAC: znaleziono plaszczyzne, %d inlierow (%.1f%%), RMS=%.2f mm, normalna=[%.2f %.2f %.2f]",
+        inlier_mask.sum(), 100 * inlier_ratio, rms, *normal_refined,
     )
+    # Wysoki RMS = punkty slabo leza na plaszczyznie (zaszumiona chmura lub
+    # paleta nie jest dominujaca plaszczyzna). Prog 30 mm jak w validate_measurement.
+    if rms > 30.0:
+        log.warning("RANSAC: wysoki RMS=%.1f mm - dopasowanie plaszczyzny slabe "
+                    "(zaszumiona chmura lub bledna detekcja palety)", rms)
+    # Niski udzial inlierow = plaszczyzna palety nie dominuje w scenie.
+    if inlier_ratio < 0.2:
+        log.warning("RANSAC: tylko %.0f%% punktow lezy na plaszczyznie - paleta moze nie byc "
+                    "dominujaca plaszczyzna (sprawdz kadr)", 100 * inlier_ratio)
 
     return PlaneModel(
         normal=normal_refined,
@@ -207,6 +226,8 @@ def transform_to_pallet_frame(
     # Rotacja i translacja: przenosimy cala chmure do ukladu palety
     xyz_pallet = (R @ (xyz - centroid).T).T
 
+    log.debug("Uklad palety: centroid=[%.0f %.0f %.0f] mm, zakres Z po transformacji [%.0f, %.0f] mm",
+              *centroid, float(xyz_pallet[:, 2].min()), float(xyz_pallet[:, 2].max()))
     return xyz_pallet, R, centroid
 
 
@@ -240,6 +261,10 @@ def filter_roi(
         int(pallet_width_mm), int(pallet_length_mm),
         mask.sum(), len(xyz_pallet), 100 * mask.mean(),
     )
+    if mask.sum() == 0:
+        log.warning("ROI: 0 punktow wewnatrz obrysu palety - origin ukladu palety moze byc "
+                    "przesuniety lub gabaryt %dx%d mm zle dobrany",
+                    int(pallet_width_mm), int(pallet_length_mm))
     return mask
 
 
@@ -299,8 +324,9 @@ def detect_pallet(
 
 if __name__ == "__main__":
     import argparse
+    from logging_setup import setup_logging
 
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    setup_logging()
 
     parser = argparse.ArgumentParser(description="Test detekcji plaszczyzny palety")
     parser.add_argument("--cloud", required=True, help="Plik .npy z chmura punktow (N,3)")

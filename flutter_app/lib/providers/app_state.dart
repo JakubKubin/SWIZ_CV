@@ -11,8 +11,11 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../models/models.dart';
 import '../services/api_service.dart';
+import '../utils/log.dart';
 
 class AppState extends ChangeNotifier {
+  static const _log = Log('AppState');
+
   static const _kServerUrl = 'server_url';
   static const _kDeviceId = 'device_id';
   static const _kMac = 'mac';
@@ -111,12 +114,14 @@ class AppState extends ChangeNotifier {
   }
 
   void _setError(String msg) {
+    _log.warn('Błąd UI: $msg');
     error = msg;
     isLoading = false;
     notifyListeners();
   }
 
   void _setInfo(String msg) {
+    _log.info(msg);
     info = msg;
     notifyListeners();
   }
@@ -156,7 +161,9 @@ class AppState extends ChangeNotifier {
       knownSessions = list
           .map((e) => SessionRef.fromJson(e as Map<String, dynamic>))
           .toList();
-    } catch (_) {
+      _log.info('Wczytano ${knownSessions.length} zapamiętanych sesji');
+    } catch (e, st) {
+      _log.warn('Nie udało się odczytać historii sesji - czyszczę', e, st);
       knownSessions = [];
     }
   }
@@ -220,10 +227,14 @@ class AppState extends ChangeNotifier {
       session = joined;
       _rememberSession(sess.sessionId, leader);
 
+      _log.info('Utworzono i dołączono do sesji ${sess.sessionId} '
+          '(leader=$leader, device=$did)');
       _connectWs();
       _setLoading(false);
       return true;
-    } catch (e) {
+    } catch (e, st) {
+      _log.warn('Tworzenie/dołączanie do sesji nie powiodło się '
+          '(device=$did, server=$serverUrl)', e, st);
       sessionId = null;
       _setError(e.toString());
       return false;
@@ -246,10 +257,12 @@ class AppState extends ChangeNotifier {
       session = joined;
       _rememberSession(sid, leader);
 
+      _log.info('Dołączono do istniejącej sesji $sid (leader=$leader, device=$did)');
       _connectWs();
       _setLoading(false);
       return true;
-    } catch (e) {
+    } catch (e, st) {
+      _log.warn('Dołączanie do sesji $sid nie powiodło się (device=$did)', e, st);
       sessionId = null;
       _setError(e.toString());
       return false;
@@ -273,12 +286,15 @@ class AppState extends ChangeNotifier {
       // opuściło), dołączamy je ponownie tą samą rolą.
       final stillMember = fetched.devices.any((d) => d.deviceId == deviceId);
       if (!stillMember) {
+        _log.info('Urządzenie $deviceId nie jest już w sesji ${ref.sessionId} '
+            '- ponowna rejestracja (leader=${ref.isLeader})');
         fetched =
             await _api.joinSession(ref.sessionId, deviceId, mac, ref.isLeader);
       }
 
       session = fetched;
       _rememberSession(ref.sessionId, ref.isLeader);
+      _log.info('Wznowiono sesję ${ref.sessionId} (stan=${fetched.state})');
       _connectWs();
 
       if (fetched.hasMeasurement || fetched.isDone) {
@@ -287,7 +303,9 @@ class AppState extends ChangeNotifier {
 
       _setLoading(false);
       return true;
-    } catch (e) {
+    } catch (e, st) {
+      _log.warn('Nie udało się wznowić sesji ${ref.sessionId} '
+          '(server=${ref.serverUrl})', e, st);
       sessionId = null;
       session = null;
       _setError('Nie można wrócić do sesji ${ref.sessionId}: $e');
@@ -299,8 +317,11 @@ class AppState extends ChangeNotifier {
   Future<void> deleteKnownSession(SessionRef ref) async {
     try {
       await _api.deleteSession(ref.sessionId);
-    } catch (_) {
+      _log.info('Usunięto sesję ${ref.sessionId} na serwerze');
+    } catch (e, st) {
       // Sesja mogła już nie istnieć na serwerze - i tak czyścimy lokalnie.
+      _log.warn('Usuwanie sesji ${ref.sessionId} na serwerze nie powiodło się '
+          '- usuwam tylko lokalnie', e, st);
     }
     _forgetSession(ref.sessionId);
     if (sessionId == ref.sessionId) {
@@ -320,7 +341,9 @@ class AppState extends ChangeNotifier {
     try {
       session = await _api.getSession(sessionId!);
       notifyListeners();
-    } catch (_) {}
+    } catch (e, st) {
+      _log.warn('Nie udało się odświeżyć sesji $sessionId', e, st);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -342,19 +365,25 @@ class AppState extends ChangeNotifier {
     _wsSub?.cancel();
 
     try {
+      _log.info('Łączenie WebSocket: $wsUrl');
       _ws = WebSocketChannel.connect(Uri.parse(wsUrl));
       _wsSub = _ws!.stream.listen(
         (raw) {
           try {
             _handleWsMsg(jsonDecode(raw as String) as Map<String, dynamic>);
-          } catch (_) {}
+          } catch (e, st) {
+            _log.warn('Nie udało się sparsować wiadomości WS: $raw', e, st);
+          }
         },
-        onError: (Object e) {
+        onError: (Object e, StackTrace st) {
           wsConnected = false;
+          _log.error('Błąd strumienia WebSocket ($wsUrl)', e, st);
           _setError('WebSocket: $e');
         },
         onDone: () {
           wsConnected = false;
+          _log.warn('WebSocket rozłączony ($wsUrl), kod=${_ws?.closeCode}, '
+              'powód=${_ws?.closeReason}');
           _setInfo('WebSocket rozłączony');
           notifyListeners();
         },
@@ -362,9 +391,14 @@ class AppState extends ChangeNotifier {
 
       // Ping startowy - pomiar offsetu czasu serwera
       Future.delayed(const Duration(milliseconds: 400), () {
-        _ws?.sink.add(jsonEncode({'action': 'ping'}));
+        try {
+          _ws?.sink.add(jsonEncode({'action': 'ping'}));
+        } catch (e, st) {
+          _log.warn('Nie udało się wysłać pinga startowego WS', e, st);
+        }
       });
-    } catch (e) {
+    } catch (e, st) {
+      _log.error('Nie można połączyć WebSocket ($wsUrl)', e, st);
       _setError('Nie można połączyć WebSocket: $e');
     }
   }
@@ -376,12 +410,18 @@ class AppState extends ChangeNotifier {
     if (wsLog.length > 30) wsLog.removeAt(0);
 
     final event = msg['event'] as String?;
+    _log.info('WS event: ${event ?? "(brak pola event)"}');
+    if (event == null) {
+      _log.warn('Wiadomość WS bez pola "event": $msg');
+    }
 
     switch (event) {
       case 'pong':
         final st = (msg['t'] as num?)?.toDouble() ?? 0.0;
         serverTimeOffset = st - DateTime.now().millisecondsSinceEpoch / 1000.0;
         wsConnected = true;
+        _log.info('WS połączony, offset czasu serwera = '
+            '${serverTimeOffset.toStringAsFixed(3)} s');
         break;
 
       case 'device_joined':
@@ -422,6 +462,7 @@ class AppState extends ChangeNotifier {
         break;
 
       case 'error':
+        _log.warn('Serwer zgłosił błąd przez WS: ${msg['message']}');
         _setError('Serwer: ${msg['message'] ?? 'Nieznany błąd'}');
         refreshSession();
         break;
@@ -435,7 +476,8 @@ class AppState extends ChangeNotifier {
     try {
       measurement = await _api.getMeasurement(sessionId!);
       notifyListeners();
-    } catch (e) {
+    } catch (e, st) {
+      _log.warn('Nie udało się pobrać wyników pomiaru dla sesji $sessionId', e, st);
       _setError('Błąd pobierania wyników: $e');
     }
   }
@@ -469,16 +511,20 @@ class AppState extends ChangeNotifier {
       return false;
     }
     _setLoading(true);
+    final total = pendingCalibImages.length;
     try {
       final toUpload = List.of(pendingCalibImages);
-      for (final img in toUpload) {
-        await _api.uploadCalibImage(sessionId!, deviceId, img.bytes);
+      for (var i = 0; i < toUpload.length; i++) {
+        await _api.uploadCalibImage(sessionId!, deviceId, toUpload[i].bytes);
       }
       pendingCalibImages.clear();
       await refreshSession();
+      _log.info('Przesłano $total klatek kalibracyjnych (device=$deviceId)');
       _setLoading(false);
       return true;
-    } catch (e) {
+    } catch (e, st) {
+      _log.warn('Przesyłanie klatek kalibracyjnych nie powiodło się '
+          '(device=$deviceId, $total w kolejce)', e, st);
       _setError(e.toString());
       return false;
     }
@@ -490,7 +536,8 @@ class AppState extends ChangeNotifier {
     try {
       await _api.computeCalibration(sessionId!);
       _setInfo('Kalibracja uruchomiona w tle - czekaj na wynik...');
-    } catch (e) {
+    } catch (e, st) {
+      _log.warn('Nie udało się uruchomić kalibracji dla sesji $sessionId', e, st);
       _setError(e.toString());
     }
     _setLoading(false);
@@ -505,7 +552,9 @@ class AppState extends ChangeNotifier {
     if (sessionId == null) return;
     try {
       await _api.triggerCapture(sessionId!, delayMs);
-    } catch (e) {
+      _log.info('Wysłano trigger przechwycenia (delay=${delayMs}ms)');
+    } catch (e, st) {
+      _log.warn('Nie udało się wyzwolić przechwycenia (sesja $sessionId)', e, st);
       _setError(e.toString());
     }
   }
@@ -515,13 +564,22 @@ class AppState extends ChangeNotifier {
     try {
       await _api.uploadCaptureImage(sessionId!, deviceId, bytes);
       // Powiadom serwer (inne urządzenia) - at w czasie serwera
-      _ws?.sink.add(jsonEncode({
-        'action': 'captured',
-        'at': DateTime.now().millisecondsSinceEpoch / 1000.0 + serverTimeOffset,
-      }));
+      try {
+        _ws?.sink.add(jsonEncode({
+          'action': 'captured',
+          'at':
+              DateTime.now().millisecondsSinceEpoch / 1000.0 + serverTimeOffset,
+        }));
+      } catch (e, st) {
+        _log.warn('Zdjęcie przesłane, ale powiadomienie WS "captured" '
+            'nie zostało wysłane', e, st);
+      }
       await refreshSession();
+      _log.info('Przesłano zdjęcie pomiarowe (${bytes.length} B, device=$deviceId)');
       return true;
-    } catch (e) {
+    } catch (e, st) {
+      _log.warn('Przesyłanie zdjęcia pomiarowego nie powiodło się '
+          '(device=$deviceId, ${bytes.length} B)', e, st);
       _setError(e.toString());
       return false;
     }
@@ -533,7 +591,8 @@ class AppState extends ChangeNotifier {
     try {
       await _api.runMeasurement(sessionId!);
       _setInfo('Pipeline pomiaru uruchomiony - czekaj na wynik...');
-    } catch (e) {
+    } catch (e, st) {
+      _log.warn('Nie udało się uruchomić pomiaru dla sesji $sessionId', e, st);
       _setError(e.toString());
     }
     _setLoading(false);
@@ -548,9 +607,11 @@ class AppState extends ChangeNotifier {
     try {
       final result = await _api.syntheticMeasure();
       measurement = result;
+      _log.info('Test syntetyczny zakończony (walidacja=${result.validationPassed})');
       _setLoading(false);
       return result;
-    } catch (e) {
+    } catch (e, st) {
+      _log.warn('Test syntetyczny nie powiódł się (server=$serverUrl)', e, st);
       _setError(e.toString());
       return null;
     }
@@ -578,7 +639,11 @@ class AppState extends ChangeNotifier {
       try {
         // Wypisuje to urządzenie. Backend zachowuje sesję i jej dane.
         await _api.leaveDevice(sessionId!, deviceId);
-      } catch (_) {}
+        _log.info('Opuszczono sesję $sessionId (device=$deviceId)');
+      } catch (e, st) {
+        _log.warn('Wypisanie urządzenia z sesji $sessionId nie powiodło się '
+            '- czyszczę stan lokalny mimo to', e, st);
+      }
     }
 
     sessionId = null;
