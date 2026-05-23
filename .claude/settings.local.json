@@ -17,7 +17,8 @@
       "Bash(curl *)",
       "Bash(whoami)",
       "Bash(python -m pyright disparity.py)",
-      "Bash(docker exec *)"
+      "Bash(docker exec *)",
+      "Bash(python3 -m json.tool)"
     ]
   }
 }

@@ -14,13 +14,15 @@ from pydantic import BaseModel, Field
 class JoinRequest(BaseModel):
     device_id: str = Field(..., min_length=1, max_length=64, description="Identyfikator urządzenia")
     mac: str = Field(..., min_length=1, max_length=64, description="Adres MAC urządzenia")
-    is_leader: bool = Field(False, description="True = lewa kamera (leader), False = prawa (follower)")
+    is_leader: bool = Field(False, description="True = zarządza sesją (lider)")
+    is_camera: bool = Field(True, description="False = urządzenie tylko zarządza sesją (np. PC), nie uczestniczy w kalibracji/przechwyceniu")
 
 
 class DeviceOut(BaseModel):
     device_id: str
     mac: str
     is_leader: bool
+    is_camera: bool = True
     joined_at: float
     ws_connected: bool
     calib_frame_count: int

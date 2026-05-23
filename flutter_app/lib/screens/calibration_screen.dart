@@ -47,14 +47,14 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
   }
 
   void _onStateChange() {
-    if (_appState.calibTriggerAt != null) {
+    if (_appState.isCamera && _appState.calibTriggerAt != null) {
       _startCountdown();
     }
   }
 
   void _checkExistingTrigger() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _appState.calibTriggerAt != null) {
+      if (mounted && _appState.isCamera && _appState.calibTriggerAt != null) {
         _startCountdown();
       }
     });

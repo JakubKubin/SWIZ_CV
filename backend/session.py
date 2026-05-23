@@ -49,6 +49,7 @@ class Device:
     device_id: str
     mac: str
     is_leader: bool
+    is_camera: bool = True
     joined_at: float = field(default_factory=time.time)
     ws_connected: bool = False
     calib_frame_count: int = 0
@@ -122,18 +123,36 @@ class Session:
         return next((d for d in self.devices.values() if not d.is_leader), None)
 
     def is_full(self) -> bool:
-        return len(self.devices) >= 2
+        return len(self.devices) >= 10
+
+    def left_camera(self) -> Optional["Device"]:
+        """Lewa kamera stereo: is_camera=True, lider pierwszeński, potem kolejność dołączenia."""
+        cams = sorted(
+            (d for d in self.devices.values() if d.is_camera),
+            key=lambda d: (not d.is_leader, d.joined_at),
+        )
+        return cams[0] if cams else None
+
+    def right_camera(self) -> Optional["Device"]:
+        """Prawa kamera stereo: druga kamera wg tej samej kolejności co left_camera."""
+        cams = sorted(
+            (d for d in self.devices.values() if d.is_camera),
+            key=lambda d: (not d.is_leader, d.joined_at),
+        )
+        return cams[1] if len(cams) >= 2 else None
 
     def min_calib_frames(self) -> int:
-        """Minimalna liczba klatek kalibracyjnych wsrod urzadzen."""
-        if not self.devices:
+        """Minimalna liczba klatek kalibracyjnych wsrod urzadzen-kamer."""
+        cams = [d for d in self.devices.values() if d.is_camera]
+        if not cams:
             return 0
-        return min(d.calib_frame_count for d in self.devices.values())
+        return min(d.calib_frame_count for d in cams)
 
     def min_capture_frames(self) -> int:
-        if not self.devices:
+        cams = [d for d in self.devices.values() if d.is_camera]
+        if not cams:
             return 0
-        return min(d.capture_frame_count for d in self.devices.values())
+        return min(d.capture_frame_count for d in cams)
 
     # --- Serializacja (persystencja na dysku) ------------------------------
 

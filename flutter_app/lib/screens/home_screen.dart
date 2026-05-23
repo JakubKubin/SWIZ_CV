@@ -19,6 +19,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final _sidCtrl = TextEditingController();
   bool _busy = false;
   bool? _connectionOk;
+  bool _isCamera = true;
 
   @override
   void initState() {
@@ -47,6 +48,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _deviceCtrl.text.trim(),
       _macCtrl.text.trim(),
       true,
+      camera: _isCamera,
     );
     setState(() => _busy = false);
     if (ok && mounted) {
@@ -70,6 +72,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _deviceCtrl.text.trim(),
       _macCtrl.text.trim(),
       false,
+      camera: _isCamera,
     );
     setState(() => _busy = false);
     if (ok && mounted) {
@@ -236,6 +239,14 @@ class _HomeScreenState extends State<HomeScreen> {
                       labelText: 'Adres MAC',
                       prefixIcon: Icon(Icons.router_outlined),
                     ),
+                  ),
+                  const SizedBox(height: 4),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Mam kamerę'),
+                    subtitle: const Text('Odznacz dla PC/admin bez kamery'),
+                    value: _isCamera,
+                    onChanged: (v) => setState(() => _isCamera = v),
                   ),
                 ],
               ),

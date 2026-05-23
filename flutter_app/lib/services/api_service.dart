@@ -92,12 +92,18 @@ class ApiService {
     String sid,
     String deviceId,
     String mac,
-    bool isLeader,
-  ) async {
+    bool isLeader, {
+    bool isCamera = true,
+  }) async {
     final r = await http.post(
       _uri('/sessions/$sid/join'),
       headers: _jsonHeaders(),
-      body: jsonEncode({'device_id': deviceId, 'mac': mac, 'is_leader': isLeader}),
+      body: jsonEncode({
+        'device_id': deviceId,
+        'mac': mac,
+        'is_leader': isLeader,
+        'is_camera': isCamera,
+      }),
     );
     await _checkStatus(r);
     return SessionData.fromJson(jsonDecode(r.body) as Map<String, dynamic>);

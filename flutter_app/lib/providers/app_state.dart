@@ -52,6 +52,7 @@ class AppState extends ChangeNotifier {
   String deviceId = '';
   String mac = '';
   bool isLeader = true;
+  bool isCamera = true;
 
   // -------------------------------------------------------------------------
   // Stan sesji
@@ -181,7 +182,7 @@ class AppState extends ChangeNotifier {
   }
 
   /// Zapamiętuje sesję w historii (lub aktualizuje istniejący wpis).
-  void _rememberSession(String sid, bool leader) {
+  void _rememberSession(String sid, bool leader, {bool camera = true}) {
     knownSessions.removeWhere((s) => s.sessionId == sid);
     knownSessions.insert(
       0,
@@ -189,6 +190,7 @@ class AppState extends ChangeNotifier {
         sessionId: sid,
         serverUrl: serverUrl,
         isLeader: leader,
+        isCamera: camera,
         createdAt: DateTime.now().millisecondsSinceEpoch / 1000.0,
       ),
     );
@@ -218,21 +220,22 @@ class AppState extends ChangeNotifier {
   // -------------------------------------------------------------------------
 
   /// Tworzy nową sesję i dołącza jako lider lub follower.
-  Future<bool> createAndJoin(String did, String m, bool leader) async {
+  Future<bool> createAndJoin(String did, String m, bool leader, {bool camera = true}) async {
     _setLoading(true);
     try {
       serverUrl = serverUrl.trim();
       deviceId = did;
       mac = m;
       isLeader = leader;
+      isCamera = camera;
       _resetTransientState();
 
       final sess = await _api.createSession();
       sessionId = sess.sessionId;
 
-      final joined = await _api.joinSession(sess.sessionId, did, m, leader);
+      final joined = await _api.joinSession(sess.sessionId, did, m, leader, isCamera: camera);
       session = joined;
-      _rememberSession(sess.sessionId, leader);
+      _rememberSession(sess.sessionId, leader, camera: camera);
 
       _log.info('Utworzono i dołączono do sesji ${sess.sessionId} '
           '(leader=$leader, device=$did)');
@@ -250,19 +253,20 @@ class AppState extends ChangeNotifier {
 
   /// Dołącza do istniejącej sesji (follower).
   Future<bool> joinExisting(
-      String sid, String did, String m, bool leader) async {
+      String sid, String did, String m, bool leader, {bool camera = true}) async {
     _setLoading(true);
     try {
       serverUrl = serverUrl.trim();
       deviceId = did;
       mac = m;
       isLeader = leader;
+      isCamera = camera;
       sessionId = sid;
       _resetTransientState();
 
-      final joined = await _api.joinSession(sid, did, m, leader);
+      final joined = await _api.joinSession(sid, did, m, leader, isCamera: camera);
       session = joined;
-      _rememberSession(sid, leader);
+      _rememberSession(sid, leader, camera: camera);
 
       _log.info('Dołączono do istniejącej sesji $sid (leader=$leader, device=$did)');
       _connectWs();
@@ -294,13 +298,17 @@ class AppState extends ChangeNotifier {
       final stillMember = fetched.devices.any((d) => d.deviceId == deviceId);
       if (!stillMember) {
         _log.info('Urządzenie $deviceId nie jest już w sesji ${ref.sessionId} '
-            '- ponowna rejestracja (leader=${ref.isLeader})');
-        fetched =
-            await _api.joinSession(ref.sessionId, deviceId, mac, ref.isLeader);
+            '- ponowna rejestracja (leader=${ref.isLeader}, camera=${ref.isCamera})');
+        fetched = await _api.joinSession(
+          ref.sessionId, deviceId, mac, ref.isLeader,
+          isCamera: ref.isCamera,
+        );
       }
+      isLeader = ref.isLeader;
+      isCamera = ref.isCamera;
 
       session = fetched;
-      _rememberSession(ref.sessionId, ref.isLeader);
+      _rememberSession(ref.sessionId, ref.isLeader, camera: ref.isCamera);
       _log.info('Wznowiono sesję ${ref.sessionId} (stan=${fetched.state})');
       _connectWs();
 
@@ -560,7 +568,7 @@ class AppState extends ChangeNotifier {
 
   /// Uploads a single calibration image immediately (used after synchronized capture).
   Future<bool> uploadCalibImageNow(Uint8List bytes) async {
-    if (sessionId == null || deviceId.isEmpty) return false;
+    if (!isCamera || sessionId == null || deviceId.isEmpty) return false;
     try {
       final resp = await _api.uploadCalibImage(sessionId!, deviceId, bytes);
       final newTotal = resp['total_frames'] as int?;
@@ -614,7 +622,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<bool> uploadCaptureImage(Uint8List bytes) async {
-    if (sessionId == null || deviceId.isEmpty) return false;
+    if (!isCamera || sessionId == null || deviceId.isEmpty) return false;
     try {
       await _api.uploadCaptureImage(sessionId!, deviceId, bytes);
       // Powiadom serwer (inne urządzenia) - at w czasie serwera

@@ -96,6 +96,7 @@ def _session_to_out(session) -> SessionOut:
                 device_id=d.device_id,
                 mac=d.mac,
                 is_leader=d.is_leader,
+                is_camera=d.is_camera,
                 joined_at=d.joined_at,
                 ws_connected=d.ws_connected,
                 calib_frame_count=d.calib_frame_count,
@@ -177,7 +178,7 @@ async def join_session(session_id: str, body: JoinRequest):
         raise HTTPException(status_code=409, detail="Urządzenie już dołączyło do sesji")
 
     if session.is_full():
-        raise HTTPException(status_code=409, detail="Sesja jest pełna (maks. 2 urządzenia)")
+        raise HTTPException(status_code=409, detail="Sesja jest pełna (maks. 10 urządzeń)")
 
     # Tylko jedno urzadzenie moze byc leaderem
     if body.is_leader and session.leader() is not None:
@@ -188,6 +189,7 @@ async def join_session(session_id: str, body: JoinRequest):
         device_id=body.device_id,
         mac=body.mac,
         is_leader=body.is_leader,
+        is_camera=body.is_camera,
     )
     session.devices[body.device_id] = device
     session.calib_dir(body.device_id).mkdir(parents=True, exist_ok=True)
@@ -313,10 +315,11 @@ async def compute_calibration(session_id: str):
     """
     session = await _get_or_404(session_id)
 
-    if len(session.devices) < 2:
+    camera_devices = [d for d in session.devices.values() if d.is_camera]
+    if len(camera_devices) < 2:
         raise HTTPException(
             status_code=409,
-            detail="Potrzeba 2 urządzeń (leader + follower) do kalibracji stereo",
+            detail="Potrzeba 2 urządzeń z kamerą do kalibracji stereo",
         )
 
     if session.state == SessionState.CALIBRATING:

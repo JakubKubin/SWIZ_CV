@@ -42,7 +42,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
   }
 
   void _onStateChange() {
-    if (_appState.captureTriggerAt != null) {
+    if (_appState.isCamera && _appState.captureTriggerAt != null) {
       _startCountdown();
     }
   }
@@ -51,7 +51,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
     // Po pierwszej klatce - _startCountdown wywołuje setState, więc nie może
     // zostać wywołane synchronicznie w initState.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _appState.captureTriggerAt != null) {
+      if (mounted && _appState.isCamera && _appState.captureTriggerAt != null) {
         _startCountdown();
       }
     });

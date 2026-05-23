@@ -93,25 +93,25 @@ def _sync_calibrate(session_id: str) -> CalibResult:
     """
     session = store.get_sync(session_id)
 
-    leader = session.leader()
-    follower = session.follower()
-    if leader is None or follower is None:
-        raise ValueError("Potrzeba dokladnie 2 urzadzen (leader + follower)")
+    left = session.left_camera()
+    right = session.right_camera()
+    if left is None or right is None:
+        raise ValueError("Potrzeba 2 urządzeń z kamerą do kalibracji stereo")
 
-    left_paths = sorted(session.calib_dir(leader.device_id).glob("frame_*.jpg")) + \
-                 sorted(session.calib_dir(leader.device_id).glob("frame_*.png"))
-    right_paths = sorted(session.calib_dir(follower.device_id).glob("frame_*.jpg")) + \
-                  sorted(session.calib_dir(follower.device_id).glob("frame_*.png"))
+    left_paths = sorted(session.calib_dir(left.device_id).glob("frame_*.jpg")) + \
+                 sorted(session.calib_dir(left.device_id).glob("frame_*.png"))
+    right_paths = sorted(session.calib_dir(right.device_id).glob("frame_*.jpg")) + \
+                  sorted(session.calib_dir(right.device_id).glob("frame_*.png"))
 
     pairs = list(zip(sorted(left_paths), sorted(right_paths)))
     if len(pairs) < 3:
         raise ValueError(
             f"Za malo par kalibracyjnych: {len(pairs)} < 3. "
-            f"Leader: {len(left_paths)} kl., Follower: {len(right_paths)} kl."
+            f"Lewa: {len(left_paths)} kl., Prawa: {len(right_paths)} kl."
         )
 
     log.info("Kalibracja: %d par klatek (%s / %s)", len(pairs),
-             leader.device_id, follower.device_id)
+             left.device_id, right.device_id)
 
     stereo = calibrate_stereo(
         [str(p) for p, _ in pairs],
@@ -180,10 +180,10 @@ def _sync_measure(session_id: str) -> MeasResult:
     if session.calib_result is None:
         raise ValueError("Brak kalibracji - najpierw wykonaj kalibracje")
 
-    leader = session.leader()
-    follower = session.follower()
-    if leader is None or follower is None:
-        raise ValueError("Brak urzadzen w sesji")
+    left = session.left_camera()
+    right = session.right_camera()
+    if left is None or right is None:
+        raise ValueError("Potrzeba 2 urządzeń z kamerą do pomiaru")
 
     stereo = load_params(session.calib_result.params_path, stereo=True)
 
@@ -195,8 +195,8 @@ def _sync_measure(session_id: str) -> MeasResult:
             raise FileNotFoundError(f"Brak zdiec pomiarowych w: {directory}")
         return imgs[-1]
 
-    left_path = latest_image(session.capture_dir(leader.device_id))
-    right_path = latest_image(session.capture_dir(follower.device_id))
+    left_path = latest_image(session.capture_dir(left.device_id))
+    right_path = latest_image(session.capture_dir(right.device_id))
 
     log.info("[%s] Pomiar: left=%s right=%s", session_id, left_path.name, right_path.name)
 

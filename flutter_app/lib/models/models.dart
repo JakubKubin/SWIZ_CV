@@ -8,6 +8,7 @@ class DeviceInfo {
   final String deviceId;
   final String mac;
   final bool isLeader;
+  final bool isCamera;
   final double joinedAt;
   final bool wsConnected;
   final int calibFrameCount;
@@ -17,6 +18,7 @@ class DeviceInfo {
     required this.deviceId,
     required this.mac,
     required this.isLeader,
+    this.isCamera = true,
     required this.joinedAt,
     required this.wsConnected,
     required this.calibFrameCount,
@@ -27,6 +29,7 @@ class DeviceInfo {
         deviceId: j['device_id'] as String,
         mac: j['mac'] as String,
         isLeader: j['is_leader'] as bool,
+        isCamera: j['is_camera'] as bool? ?? true,
         joinedAt: (j['joined_at'] as num).toDouble(),
         wsConnected: j['ws_connected'] as bool? ?? false,
         calibFrameCount: j['calib_frame_count'] as int? ?? 0,
@@ -42,6 +45,7 @@ class DeviceInfo {
         deviceId: deviceId,
         mac: mac,
         isLeader: isLeader,
+        isCamera: isCamera,
         joinedAt: joinedAt,
         wsConnected: wsConnected ?? this.wsConnected,
         calibFrameCount: calibFrameCount ?? this.calibFrameCount,
@@ -49,7 +53,7 @@ class DeviceInfo {
       );
 
   static const empty = DeviceInfo(
-    deviceId: '', mac: '', isLeader: false,
+    deviceId: '', mac: '', isLeader: false, isCamera: true,
     joinedAt: 0, wsConnected: false,
     calibFrameCount: 0, captureFrameCount: 0,
   );
@@ -98,11 +102,16 @@ class SessionData {
   bool get isProcessing => state == 'PROCESSING';
   bool get isDone => state == 'DONE';
 
-  bool get allCaptured =>
-      devices.isNotEmpty && devices.every((d) => d.captureFrameCount > 0);
+  bool get allCaptured {
+    final cams = devices.where((d) => d.isCamera).toList();
+    return cams.isNotEmpty && cams.every((d) => d.captureFrameCount > 0);
+  }
 
-  int get minCalibFrames =>
-      devices.isEmpty ? 0 : devices.map((d) => d.calibFrameCount).reduce((a, b) => a < b ? a : b);
+  int get minCalibFrames {
+    final cams = devices.where((d) => d.isCamera).toList();
+    if (cams.isEmpty) return 0;
+    return cams.map((d) => d.calibFrameCount).reduce((a, b) => a < b ? a : b);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -172,14 +181,16 @@ class MeasurementResult {
 /// uruchomieniu aplikacji albo po opuszczeniu sesji.
 class SessionRef {
   final String sessionId;
-  final String serverUrl; // serwer, na którym sesja istnieje
-  final bool isLeader; // rola tego urządzenia w sesji
-  final double createdAt; // czas zapamiętania (Unix sek.)
+  final String serverUrl;
+  final bool isLeader;
+  final bool isCamera;
+  final double createdAt;
 
   const SessionRef({
     required this.sessionId,
     required this.serverUrl,
     required this.isLeader,
+    this.isCamera = true,
     required this.createdAt,
   });
 
@@ -187,6 +198,7 @@ class SessionRef {
         'session_id': sessionId,
         'server_url': serverUrl,
         'is_leader': isLeader,
+        'is_camera': isCamera,
         'created_at': createdAt,
       };
 
@@ -194,6 +206,7 @@ class SessionRef {
         sessionId: j['session_id'] as String,
         serverUrl: j['server_url'] as String? ?? '',
         isLeader: j['is_leader'] as bool? ?? false,
+        isCamera: j['is_camera'] as bool? ?? true,
         createdAt: (j['created_at'] as num?)?.toDouble() ?? 0,
       );
 }
