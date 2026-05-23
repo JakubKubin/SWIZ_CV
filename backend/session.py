@@ -78,7 +78,7 @@ class MeasResult:
     pallet_rms_mm: float
     n_object_pts: int
     n_pallet_inliers: int
-    issues: list
+    issues: list[str]
     report: str
     measured_at: float = field(default_factory=time.time)
 

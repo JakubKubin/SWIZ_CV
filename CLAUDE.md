@@ -1,247 +1,220 @@
 # Stereo Vision - Pomiar obiektow na europalecie
 
 ## Cel projektu
-System stereowizyjny do pomiaru wymiarów (długość, szerokość, wysokość) obiektów umieszczonych na standardowej europalecie (1200x800 mm).
-Wykorzystuje on technikę stereowizji realizowaną przez grupę urządzeń mobilnych/webowych działających w ramach jednej sesji pomiarowej.
+System stereowizyjny do pomiaru wymiarów (długość, szerokość, wysokość) obiektów umieszczonych na standardowej europalecie (1200x800 mm). Dwa telefony na statywach (50-100 cm od obiektu) działają jako para stereo. Aplikacja Flutter zarządza sesją, kalibruje kamery metodą Zhanga, synchronicznie wyzwala zdjęcia i wyświetla wyniki. Backend FastAPI wykonuje cały pipeline 3D.
 
+## Stan implementacji
+**Projekt jest w pełni zaimplementowany.** Wszystkie fazy zostały ukończone.
 
-W skrócie:
-Akwizycja zdjęć ma się odbywać przy pomocy aplikacji mobilnej lub webowej napisanej we flutterze.
-Docker compose jako orkiestrator w którym będzie flutter i python jako backend jako fastapi do komunikacji.
-W aplikacji mobilnej powinna istnieć sesja do której mogą dołączać się urządzenia. Urządzenia po zamknięciu sesji na nowe powinny być skalibrowane przy pomocy metody Zhanga.
-Po kalibracji przystępujemy do wykonania zdjęcia, urządzenie pierwsze w sesji zarządza wykonaniem zdjęcia symulatanicznym na tym urządzeniu i reszcie urządzeń w sesji.
-Akwizycja zdjęcia w tym samym momencie z wielu kamer na raz ma pozwolić na wyznaczenie mapy głębi i chumury punktów w przestrzeni.
-Frontend powinien zostać wykonany w frameworku Flutter w języku Dart. Komunikacja z backendem poprzez API i WebSockets - Python fastapi.
+## Architektura systemu (faktyczna)
 
+### Komponenty
+| Komponent | Technologia | Stan |
+|-----------|------------|------|
+| Orkiestracja | Docker Compose | ✅ |
+| API + WebSocket | FastAPI + Uvicorn | ✅ |
+| Zadania w tle | `asyncio.to_thread()` (nie Celery) | ✅ |
+| Stan sesji | In-memory + zapis JSON na dysk (nie Redis) | ✅ |
+| Storage | Docker volume `session_data:/app/data` | ✅ |
+| Frontend | Flutter (poza Dockerem) | ✅ |
 
-## Architektura systemu
+> **Uwaga:** Finalna architektura nie używa Redis ani Celery. Sesje trzymane są w pamięci z persystencją na dysk (`data/{session_id}/session.json`). Zadania CPU-intensive wykonywane przez `asyncio.to_thread()`.
 
-1. Frontend - Flutter, aplikacja mobilna odpowiedzialna za zarządzanie sesją, podgląd z kamery akwizycję zdjęć oraz wyświetlanie wyników
-2. Backend - Serwer obliczeniowy realizujący kalibrację, rektyfikację, generowanie mapy głębi i analizę chmury punktów.
-3. Komunikacja:
-	- WebSockets (do zarządzania sesją i synchronicznego wyzwalania zdjęć)
-	- REST API dla przesyłu danych
-4. Baza danych/Storage: Redis (do szybkiego przekazywania statusu sesji) + wolumeny Dockerowe na zdjęcia.
+### Założenia sprzętowe
+- Docelowo dwa urządzenia (kod obsługuje więcej)
+- Lider = lewa kamera, Follower = prawa kamera
+- Flutter działa na Androidzie/iOS — nie jest w Dockerze
+- Kalibracja per para MAC adresów urządzeń
+- Rozłączenie urządzenia = wymagana rekalibracja
 
-Architektura Wdrożeniowa
-Komponent 		Technologia 		Rola
-Orkiestracja	Docker Compose		Zarządzanie kontenerami
-API				FastAPI + Uvicorn	Komunikacja asynchroniczna
-Worker			Celery + Redis		Ciężkie obliczenia OpenCV/Open3D
-Storage			Shared Volume		Przechowywanie zdjęć RAW i wyników
-Frontend		Flutter				Interfejs użytkownika i dostęp do kamery (Camera2 API / AVFoundation)
+## Struktura folderów (faktyczna)
 
-Flutter znajduje się w docker compose ze względu na przygotowanie aplikacji webowej i aplikacji mobilnej na raz po to aby przetestować podstawowe funkcje + UI/UX.
-Faktycznie aplikacja będzie ostatecznie na Androida i iOS. Nie wrzucamy fluttera do Dockera.
-
-Zakładamy na start dwa urządzenia ale piszemy aplikację i komunikację tak jakby mogłoby być więcej.
-Zdjęcia będą realizowane telefonami na statywach.
-Załóżmy że zdjęcia będą realizowane w odległości 50-100cm od odbiektu
-Zapisujemy dane z kalibracji danych pary urządzeń poprzez ich MAC - wiemy dokładnie jak zidentyfikować
-Dodajemy możliwość wyczyszczenia danych dla użytkownika jego par
-Jeśli urządzenie się jakieś rozłączy to przykro mi trzeba rekonfigurować i jazda spowrotem
-
-## Logika biznesowa
-
-3.1. Zarządzanie Sesją
-Tworzenie sesji: Użytkownik (Lider) tworzy nową sesję. Serwer generuje unikalny identyfikator sesji.
-Dołączanie: Pozostałe urządzenia (Followers) dołączają do sesji. Każde urządzenie jest identyfikowane przez device_id.
-Role: Lider posiada uprawnienia do wyzwalania kalibracji i wykonania zdjęcia pomiarowego.
-
-3.2. Proces Kalibracji
-Przed pomiarem system wymaga kalibracji par stereo.
-Urządzenia muszą pozostać nieruchome względem siebie od momentu kalibracji do wykonania zdjęcia.
-Wykorzystywana jest metoda Zhanga z użyciem wzorca szachownicy.
-
-3.3. Akwizycja i Synchronizacja
-Wyzwalanie zdjęcia odbywa się symultanicznie. Backend wysyła sygnał przez WebSockets do wszystkich urządzeń w sesji.
-Urządzenia wykonują zdjęcie i przesyłają je na serwer wraz z metadanymi (identyfikator urządzenia, timestamp).
-
-4. Endpointy API (FastAPI)
-Obsługa Sesji
-Metoda	Endpoint	Opis
-POST	/sessions/create 		Tworzy nową sesję pomiarową.
-POST	/sessions/{id}/join 	Dołączenie urządzenia do sesji.
-GET 	/sessions/{id}/status	Zwraca listę połączonych urządzeń.
-
-
-Kalibracja i Akwizycja
-Metoda	Endpoint	Opis
-POST	/calibration/upload		Przesłanie zdjęć szachownicy dla danego urządzenia.
-POST	/calibration/compute	Uruchomienie obliczeń parametrów wewnętrznych i zewnętrznych.
-POST	/capture/trigger		Wysłanie sygnału do wszystkich urządzeń o wykonaniu zdjęcia.
-POST	/capture/upload			Przesłanie finalnego zdjęcia obiektów do przetworzenia.
-
-
-POST /sessions/{id}/join
-Body: {"device_id": "UUID", "model": "iPhone13", "is_leader": bool}
-
-Logic: Rejestruje urządzenie w Redis. Jeśli to Lider, inicjuje sesję.
-
-POST /calibration/upload
-Body: multipart/form-data (file, device_id, frame_id)
-
-Logic: Zapisuje zdjęcie w folderze /data/{session_id}/{device_id}/calib/.
-
-POST /calibration/compute
-Logic: 1. Pobiera obrazy z dysku.
-2. Uruchamia cv2.stereoCalibrate.
-3. Generuje mapy rektyfikacji (initUndistortRectifyMap).
-4. Zwraca RMS error. Jeśli > 0.5, sugeruje powtórzenie kalibracji.
-
-POST /capture/upload
-Body: multipart/form-data (file, timestamp, device_id)
-
-Logic: To jest "zdjęcie właściwe". Po odebraniu kompletu zdjęć od wszystkich device_id w sesji, serwer automatycznie odpala worker (Celery/BackgroundTasks) do obliczeń 3D.
-
-Wyniki
-Metoda	Endpoint	Opis
-GET	/measurement/{session_id}	Pobranie wyników pomiaru (wymiary w mm).
-
-Zarządzanie sesją musi obsługiwać dynamiczne dołączanie urządzeń i utrzymywanie ich stanu (State Machine).
-
-Stany Sesji:
-IDLE: Oczekiwanie na urządzenia.
-
-CALIBRATING: Zbieranie par zdjęć szachownicy.
-
-READY: Parametry stereo wyliczone, system gotowy do pomiaru.
-
-PROCESSING: Serwer przetwarza chmurę punktów.
-
-Sekwencja zdarzeń (Workflow):
-Handshake: Urządzenie wysyła POST /sessions/{id}/join z informacjami o specyfikacji aparatu (fov, resolution). Serwer przypisuje device_index (np. 0 dla Lidera, 1 dla pierwszego Followera).
-
-Utrzymanie połączenia: Każde urządzenie otwiera WebSocket /ws/{session_id}/{device_id}. Służy on do przesyłania komend typu START_CALIBRATION, TRIGGER_CAPTURE oraz sygnałów HEARTBEAT.
-
-Wybór Pary: W sesji wielourządzeniowej Backend musi wiedzieć, które urządzenia tworzą parę stereo (np. Device A i Device B patrzą na ten sam obiekt).
-
-Protokół Synchronicznej Akwizycji (Precision Sync)
-Problem opóźnienia sieciowego (Network Jitter) rozwiązujemy poprzez Buffered Delayed Capture:
-
-Synchronizacja Czasu: Przy połączeniu WebSocket, klient i serwer wykonują uproszczony protokół NTP, aby wyliczyć offset czasu lokalnego względem serwera.
-
-Komenda Trigger: Lider klika przycisk. Serwer oblicza Target_Timestamp = Server_Now + 1000ms.
-
-Broadcast: Serwer wysyła do wszystkich: {"action": "capture", "at": Target_Timestamp}.
-
-Hardware Capture: Urządzenia (Flutter) planują wykonanie zdjęcia dokładnie na Target_Timestamp (używając czasu skorygowanego o offset). Dzięki temu błąd synchronizacji spada.
-
-Architektura folderów:
-stereo-vision/
+```
+swiz/
 ├── docker-compose.yml
+├── Dockerfile
+├── requirements.txt
 ├── .env
+├── env.example
+│
+├── calibration.py        # Kalibracja Zhang (single + stereo), JSON I/O
+├── disparity.py          # SGBM, rektyfikacja, konwersja disparity->depth
+├── pointcloud.py         # Budowa chmury punktów, filtracja, zapis PLY
+├── pallet.py             # Detekcja palety RANSAC+SVD, transformacja, ROI
+├── measurement.py        # Segmentacja, bbox 3D, 3x estymacja obj., walidacja
+├── pipeline.py           # Orkiestrator 8-etapowego pipeline (tryb real + synthetic)
+├── config.py             # Centralna konfiguracja z .env
+├── logging_setup.py      # Logging: konsola (INFO) + plik rotacyjny (DEBUG)
 │
 ├── backend/
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   ├── app/
-│   │   ├── main.py              # FastAPI entry point
-│   │   ├── config.py            # ustawienia z .env
-│   │   ├── models/
-│   │   │   ├── session.py       # State machine sesji
-│   │   │   └── device.py        # Model urządzenia
-│   │   ├── routers/
-│   │   │   ├── sessions.py      # /sessions/*
-│   │   │   ├── calibration.py   # /calibration/*
-│   │   │   ├── capture.py       # /capture/*
-│   │   │   └── measurement.py   # /measurement/*
-│   │   ├── websocket/
-│   │   │   └── manager.py       # WebSocket connection manager
-│   │   ├── services/
-│   │   │   ├── calibration_svc.py   # Logika Zhanga, zapis JSON per MAC-para
-│   │   │   ├── stereo_svc.py        # Rektyfikacja, disparity, głębia
-│   │   │   ├── pointcloud_svc.py    # Open3D, RANSAC, bounding box
-│   │   │   └── storage_svc.py       # Zapis/odczyt plików
-│   │   └── workers/
-│   │       └── tasks.py         # Celery tasks (ciężkie obliczenia)
-│   └── data/                    # Docker volume
-│       ├── sessions/
-│       └── calibrations/        # params_{macA}_{macB}.json
+│   ├── __init__.py
+│   ├── main.py           # FastAPI app, 30+ endpointów REST + WebSocket
+│   ├── schemas.py        # Modele Pydantic (request/response)
+│   ├── session.py        # SessionStore, state machine, SessionState enum
+│   └── tasks.py          # Zadania w tle + WebSocketManager
 │
-└── flutter_app/                 # Osobno, poza Dockerem
-    └── ...
-	
-## Pipeline - Etapy
+├── flutter_app/          # Aplikacja mobilna/web
+│   └── lib/
+│       ├── main.dart
+│       ├── providers/
+│       │   └── app_state.dart        # Provider: globalny stan aplikacji
+│       ├── services/
+│       │   └── api_service.dart      # Klient HTTP + WebSocket
+│       ├── models/
+│       │   └── models.dart           # Data classes (mirror Pydantic schemas)
+│       ├── theme/
+│       │   └── app_theme.dart
+│       ├── screens/
+│       │   ├── home_screen.dart
+│       │   ├── session_screen.dart
+│       │   ├── calibration_screen.dart
+│       │   ├── capture_screen.dart
+│       │   └── results_screen.dart
+│       ├── widgets/
+│       │   └── app_banner.dart
+│       └── utils/
+│           └── log.dart
+│
+├── test_calibration.py   # ~30 testów kalibracji (synthetic + projections)
+├── test_measurement.py   # ~40 testów pomiaru (RANSAC, bbox, walidacja)
+├── conftest.py
+│
+└── data/                 # Docker volume
+    └── {session_id}/
+        ├── session.json
+        ├── calib/{device_id}/    # Zdjęcia szachownicy
+        ├── captures/{device_id}/ # Zdjęcia pomiarowe
+        ├── stereo.json           # Parametry kalibracji stereo
+        ├── cloud.ply
+        └── measurement_report.txt
+```
 
-### ETAP 1: Kalibracja kamer
-- Kalibracja pojedynczej kamery (metoda Zhanga, OpenCV)
-- Kalibracja stereo (para kamer)
-- Zapis/odczyt parametrow kalibracji (JSON)
-- Testy jednostkowe i walidacja reproj. error
-- Zmienne srodowiskowe: rozmiar szachownicy, rozmiar kwadratu
+## API Endpoints (faktyczne)
 
-### ETAP 2: Akwizycja obrazow
-- Jednoczesne przechwytywanie z wielu kamer
-- Synchronizacja klatek
-- Zapis par stereo do dalszej obrobki
+### Sesje
+| Metoda | Endpoint | Opis |
+|--------|----------|------|
+| POST | `/sessions` | Utwórz nową sesję (zwraca session_id) |
+| GET | `/sessions/{id}` | Stan sesji + lista urządzeń |
+| GET | `/sessions` | Lista wszystkich aktywnych sesji |
+| DELETE | `/sessions/{id}` | Usuń sesję i dane |
+| POST | `/sessions/{id}/join` | Dołącz urządzenie (`device_id`, MAC, `is_leader`) |
+| DELETE | `/sessions/{id}/devices/{device_id}` | Opuść sesję (dane zachowane) |
 
-### ETAP 3: Rektyfikacja stereo
-- Obliczenie macierzy rektyfikacji z parametrow kalibracji
-- Remapowanie obrazow do ukladu rownoleglego
-- Walidacja rektyfikacji (linie epipolarne)
+### Kalibracja
+| Metoda | Endpoint | Opis |
+|--------|----------|------|
+| POST | `/sessions/{id}/calibration/images` | Upload zdjęcia szachownicy (multipart, auto-numeracja) |
+| POST | `/sessions/{id}/calibration/compute` | Uruchom kalibrację w tle |
+| GET | `/sessions/{id}/calibration` | Status kalibracji + RMS error |
 
-### ETAP 4: Mapa glebi (disparity map)
-- SGBM (Semi-Global Block Matching)
-- Filtracja mapy glebi (WLS filter)
-- Konwersja disparity -> depth (mm)
+### Akwizycja
+| Metoda | Endpoint | Opis |
+|--------|----------|------|
+| POST | `/sessions/{id}/capture/trigger` | Broadcast TRIGGER z Target_Timestamp (NTP sync); opcjonalny param `delay_ms` |
+| POST | `/sessions/{id}/capture/images` | Upload zdjęcia pomiarowego (multipart) |
 
-### ETAP 5: Detekcja europalety
-- Wykrycie plaszczyzny palety w chmurze punktow RANSAC na chmurze punktów (płaszczyzna dominująca = podłoga palety)
-- Definicja ROI na podstawie wymiarow palety (1200x800mm)
-- Transformacja do ukladu wspolrzednych palety
+### Pomiar i wyniki
+| Metoda | Endpoint | Opis |
+|--------|----------|------|
+| POST | `/sessions/{id}/measure` | Uruchom pipeline 3D w tle |
+| GET | `/sessions/{id}/measurement` | Wyniki pomiaru (W/L/H mm, 3x obj., walidacja) |
+| GET | `/sessions/{id}/measurement/report` | Pełny raport tekstowy |
+| POST | `/measure/synthetic` | Test pipeline na danych syntetycznych (bez kamer) |
 
-### ETAP 6: Segmentacja obiektu
-- Oddzielenie obiektu od palety - usunięcie punktów należących do płaszczyzny palety (clipping)
-- Kontur obiektu w  - pozostałe punkty powyżej pewnego progu (noise floor) są traktowane jako obiekt.
-- Bounding box 3D
+### Inne
+| Metoda | Endpoint | Opis |
+|--------|----------|------|
+| GET | `/health` | Health check |
+| WS | `/ws/{session_id}/{device_id}` | WebSocket (eventy, sync, heartbeat) |
 
-### ETAP 7: Pomiar wymiarow
-- Szerokosc, dlugosc, wysokosc obiektu (mm)
-- Walidacja wzgledem znanych wymiarow palety
-- Raport pomiarowy
+## State Machine sesji
 
-## Zmienne srodowiskowe (.env)
-- CHECKERBOARD_ROWS - liczba wewnetrznych naroznikow (wiersze)
-- CHECKERBOARD_COLS - liczba wewnetrznych naroznikow (kolumny)
-- SQUARE_SIZE_MM - rozmiar kwadratu szachownicy w mm
-- CALIBRATION_DIR - sciezka do obrazow kalibracyjnych
-- CALIBRATION_OUTPUT - sciezka do zapisu parametrow
+```
+IDLE → CALIBRATING → READY → PROCESSING → DONE
+         ↑_____________↑         ↑___________↑
+         (błąd kalibracji)       (błąd pomiaru, retry)
+```
 
-.env.example:
-CHECKERBOARD_ROWS=9
-CHECKERBOARD_COLS=6
-SQUARE_SIZE_MM=25
+- **IDLE**: Oczekiwanie na urządzenia
+- **CALIBRATING**: Zbieranie zdjęć szachownicy + obliczenia Zhang
+- **READY**: Parametry stereo gotowe, system gotowy do pomiaru
+- **PROCESSING**: Serwer przetwarza chmurę punktów
+- **DONE**: Wyniki dostępne
+
+## Protokół Precision Sync (akwizycja)
+
+1. Przy WebSocket handshake: klient+serwer wyznaczają NTP offset
+2. Lider klika trigger → serwer oblicza `Target_Timestamp = now + 1000ms`
+3. Serwer broadcastuje `{"action": "capture", "at": Target_Timestamp}` do wszystkich
+4. Każde urządzenie planuje zdjęcie na `Target_Timestamp - local_offset`
+
+## Pipeline 3D (8 etapów)
+
+| Etap | Moduł | Opis |
+|------|-------|------|
+| 1 | `calibration.py` | Kalibracja Zhang: K, dist, R, T, E, F, R1/R2/P1/P2/Q |
+| 2 | Backend/Flutter | Synchroniczna akwizycja par stereo |
+| 3 | `disparity.py` | Rektyfikacja (remap do układu równoległego) |
+| 4 | `disparity.py` | SGBM + WLS filter → mapa głębi (mm) via Q matrix |
+| 5 | `pointcloud.py` | Budowa chmury XYZ, filtracja statystyczna (k-NN) |
+| 6 | `pallet.py` | RANSAC (1000 iter) + SVD → płaszczyzna palety, ROI 1200×800 mm |
+| 7 | `measurement.py` | Segmentacja: noise floor 20 mm, bbox 3D |
+| 8 | `measurement.py` | Trzy estymacje obj.: voxel (najdokładniejszy), bbox, hull (scipy opcjonalny) |
+
+## Zmienne środowiskowe (.env)
+
+```env
+# Szachownica (domyślne z config.py w nawiasach)
+CHECKERBOARD_ROWS=7          # Wewnętrzne narożniki (wiersze) [default: 5]
+CHECKERBOARD_COLS=9          # Wewnętrzne narożniki (kolumny) [default: 8]
+SQUARE_SIZE_MM=44.0          # Rozmiar kwadratu w mm [default: 15.0]
+
+# Ścieżki
 CALIBRATION_DIR=/app/data/calib
-CALIBRATION_OUTPUT=/app/data/params.json
+CALIBRATION_OUTPUT=/app/data/calib_output
 
+# Serwer
+BACKEND_PORT=8000
 
+# Opcjonalne (wartości domyślne w config.py)
+LOG_LEVEL=INFO
+CORNER_DETECT_MAX_WIDTH=1920  # Skalowanie dla wysokich rozdzielczości (telefony) [default: 1920]
+MIN_CALIBRATION_IMAGES=3
+MAX_STEREO_REPROJ_ERROR=2.0   # px; powyżej → ostrzeżenie
+```
 
-Wdrożenie:
-FAZA 1 - Fundament backendu
-├── docker-compose + .env + config.py
-├── State machine sesji (Redis)
-├── WebSocket manager
-└── Endpointy /sessions/*
+Stałe nieeksponowane przez .env (hardcoded w config.py):
+- `PALLET_HEIGHT_MM = 144.0` — standardowa wysokość europalety
 
-FAZA 2 - Kalibracja
-├── Upload zdjęć szachownicy
-├── Obliczenia Zhang (OpenCV)
-└── Zapis/odczyt per para MAC
+## Testy
 
-FAZA 3 - Akwizycja
-├── Precision Sync (CAPTURE_DELAY_MS)
-├── Upload zdjęć właściwych
-└── Trigger Celery worker
+```bash
+pytest test_calibration.py   # ~30 testów: Zhang, stereo, serializacja, wysokie rozdzielczości
+pytest test_measurement.py   # ~40 testów: RANSAC, bbox, obj., walidacja
+```
 
-FAZA 4 - Pipeline 3D
-├── Rektyfikacja stereo
-├── Mapa głębi (SGBM + WLS)
-├── Chmura punktów (Open3D)
-├── RANSAC (detekcja palety)
-└── Bounding box - wymiary
+Testy używają danych syntetycznych (idealne projekcje 3D) — nie wymagają kamer.
+`conftest.py` dodaje flagę `--visualize` do zapisu obrazów diagnostycznych.
 
-Flutter
-├── Zarządzanie sesją + WS
-├── Kamera + sync capture
-└── Wyświetlanie wyników
+## Uruchomienie
+
+```bash
+# Backend
+docker compose up --build
+
+# Flutter (lokalnie)
+cd flutter_app
+flutter run                  # Android/iOS/web
+```
+
+Backend dostępny na `http://localhost:8000`. Docs: `http://localhost:8000/docs`.
+
+## Kluczowe decyzje implementacyjne
+
+- **Brak Redis/Celery**: Sesje in-memory z persystencją JSON; zadania przez `asyncio.to_thread()`. Wystarczające przy 2 urządzeniach i jednej parze stereo na raz.
+- **Parametry kalibracji per para MAC**: `data/{session_id}/stereo.json` identyfikowany przez MAC adresy obu urządzeń.
+- **scipy opcjonalny**: Estymacja hull (`hull_mm3`) dostępna tylko jeśli scipy zainstalowane; pozostałe dwie metody zawsze dostępne.
+- **Skalowanie wysokich rozdzielczości**: Detekcja narożników na przeskalowanym obrazie (`CORNER_DETECT_MAX_WIDTH`), refinement na oryginalnym — dla kamer 12+ Mpx.
+- **CORS**: Aktualnie `allow_origins=["*"]` — do ograniczenia w produkcji.
+- **Disconnect = rekalibracja**: Brak mechanizmu reconnect; zerwanie WebSocket wymaga ponownej kalibracji.

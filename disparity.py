@@ -151,7 +151,7 @@ def compute_disparity(
     gray_l = cv2.cvtColor(left_rect,  cv2.COLOR_BGR2GRAY) if left_rect.ndim  == 3 else left_rect
     gray_r = cv2.cvtColor(right_rect, cv2.COLOR_BGR2GRAY) if right_rect.ndim == 3 else right_rect
 
-    matcher = cv2.StereoSGBM_create(
+    matcher = cv2.StereoSGBM_create( # type: ignore
         minDisparity=cfg.min_disparity,
         numDisparities=cfg.num_disparities,
         blockSize=cfg.block_size,
@@ -265,8 +265,10 @@ def colormap_disparity(disparity: np.ndarray) -> np.ndarray:
     mask = d > 0
     if mask.any():
         # Normalizacja w zakresie waznych pikseli - ignorujemy zera (brak danych)
-        d[mask] = cv2.normalize(d[mask].reshape(-1, 1), None, 0, 255,
-                                cv2.NORM_MINMAX).flatten()
+        vals = d[mask]
+        d_min, d_max = float(vals.min()), float(vals.max())
+        if d_max > d_min:
+            d[mask] = (vals - d_min) / (d_max - d_min) * 255.0
     d8 = d.astype(np.uint8)
     colored = cv2.applyColorMap(d8, cv2.COLORMAP_TURBO)
     colored[~mask] = 0   # czarne piksele = brak danych
@@ -283,8 +285,10 @@ def colormap_depth(depth_mm: np.ndarray) -> np.ndarray:
     d = depth_mm.copy()
     mask = d > 0
     if mask.any():
-        d[mask] = cv2.normalize(d[mask].reshape(-1, 1), None, 0, 255,
-                                cv2.NORM_MINMAX).flatten()
+        vals = d[mask]
+        d_min, d_max = float(vals.min()), float(vals.max())
+        if d_max > d_min:
+            d[mask] = (vals - d_min) / (d_max - d_min) * 255.0
     # Odwrocenie skali: blizej = cieplej (wyzsza wartosc po odwroceniu)
     d8 = (255 - d.astype(np.uint8))
     d8[~mask] = 0

@@ -132,6 +132,8 @@ def detect_pallet_plane(
             f"Nie znaleziono plaszczyzny palety: max inlierow={best_inlier_count} < {min_inliers}"
         )
 
+    assert best_normal is not None and best_d is not None
+
     # SVD-refinement: RANSAC daje przyblizona plaszczyzne, SVD na inlierach
     # wyznacza dokladna normalna metoda minimalnej wariancji (PCA).
     # Ostatni wiersz Vt odpowiada kierunkowi najmniejszej zmiennosci - czyli

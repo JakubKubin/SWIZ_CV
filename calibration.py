@@ -101,7 +101,7 @@ class CameraParams:
     camera_matrix: np.ndarray = field(default_factory=lambda: np.eye(3))
     dist_coeffs: np.ndarray = field(default_factory=lambda: np.zeros(5))
     reproj_error: float = 0.0
-    image_size: tuple = (0, 0)
+    image_size: tuple[int, int] = (0, 0)
 
     def undistort(self, frame: np.ndarray) -> np.ndarray:
         """Zwraca obraz skorygowany o dystorsje obiektywu.
