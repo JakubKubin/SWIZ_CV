@@ -283,6 +283,12 @@ async def upload_calib_image(
     log.info("[%s] Kalibracja %s: klatka %d zapisana (%d B)",
              session_id, device_id, device.calib_frame_count - 1, len(content))
 
+    await ws_manager.broadcast(session_id, {
+        "event": "calib_frame_uploaded",
+        "device_id": device_id,
+        "total_frames": device.calib_frame_count,
+    })
+
     return {
         "device_id": device_id,
         "frame_index": device.calib_frame_count - 1,
@@ -331,6 +337,26 @@ async def compute_calibration(session_id: str):
 
     log.info("[%s] Kalibracja uruchomiona w tle", session_id)
     return {"message": "Kalibracja uruchomiona", "state": SessionState.CALIBRATING}
+
+
+@app.post(
+    "/sessions/{session_id}/calibration/trigger",
+    response_model=TriggerOut,
+    tags=["Kalibracja"],
+)
+async def trigger_calib_capture(session_id: str, body: TriggerRequest):
+    """Broadcast zsynchronizowanego triggera kalibracyjnego do wszystkich urządzeń."""
+    session = await _get_or_404(session_id)
+    if session.state == SessionState.CALIBRATING:
+        raise HTTPException(status_code=409, detail="Kalibracja w toku — poczekaj")
+    capture_at = time.time() + body.delay_ms / 1000.0
+    await ws_manager.broadcast(session_id, {
+        "event": "calib_trigger",
+        "at": capture_at,
+        "delay_ms": body.delay_ms,
+    })
+    log.info("[%s] Trigger kalibracji: at=%.3f (delay=%d ms)", session_id, capture_at, body.delay_ms)
+    return TriggerOut(at=capture_at, delay_ms=body.delay_ms)
 
 
 @app.get("/sessions/{session_id}/calibration", response_model=CalibStatusOut, tags=["Kalibracja"])

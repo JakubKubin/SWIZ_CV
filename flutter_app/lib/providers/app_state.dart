@@ -99,6 +99,9 @@ class AppState extends ChangeNotifier {
   /// Timestamp (Unix sek.) kiedy urządzenie powinno zrobić zdjęcie.
   double? captureTriggerAt;
 
+  /// Timestamp (Unix sek.) kiedy urządzenie powinno zrobić zdjęcie kalibracyjne.
+  double? calibTriggerAt;
+
   /// Log ostatnich 30 zdarzeń WebSocket (do widoku debugowania).
   final List<Map<String, dynamic>> wsLog = [];
 
@@ -139,6 +142,10 @@ class AppState extends ChangeNotifier {
   void clearCaptureTrigger() {
     captureTriggerAt = null;
     // Nie wywołujemy notifyListeners - caller zrobi to sam po starcie countdown.
+  }
+
+  void clearCalibTrigger() {
+    calibTriggerAt = null;
   }
 
   // -------------------------------------------------------------------------
@@ -198,10 +205,10 @@ class AppState extends ChangeNotifier {
   void _resetTransientState() {
     measurement = null;
     captureTriggerAt = null;
+    calibTriggerAt = null;
     serverTimeOffset = 0.0;
     wsConnected = false;
     wsLog.clear();
-    pendingCalibImages.clear();
     error = null;
     info = null;
   }
@@ -482,6 +489,23 @@ class AppState extends ChangeNotifier {
         notifyListeners();
         break;
 
+      case 'calib_trigger':
+        calibTriggerAt = (msg['at'] as num?)?.toDouble();
+        notifyListeners();
+        break;
+
+      case 'calib_frame_uploaded':
+        final upDeviceId = msg['device_id'] as String?;
+        final newTotal = (msg['total_frames'] as num?)?.toInt();
+        if (upDeviceId != null && newTotal != null && session != null) {
+          session = session!.copyWithDevices(
+            session!.devices.map((d) => d.deviceId == upDeviceId
+                ? d.copyWith(calibFrameCount: newTotal)
+                : d).toList(),
+          );
+        }
+        break;
+
       case 'device_captured':
         _setInfo('Urządzenie ${msg['device_id']} wykonało zdjęcie');
         refreshSession();
@@ -519,49 +543,39 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // -------------------------------------------------------------------------
-  // Kalibracja — staging obrazów (przeżywa nawigację)
-  // -------------------------------------------------------------------------
-
-  final List<({Uint8List bytes, String name})> pendingCalibImages = [];
-
-  void addPendingCalibImages(List<({Uint8List bytes, String name})> images) {
-    pendingCalibImages.addAll(images);
-    notifyListeners();
-  }
-
-  void removePendingCalibImage(int index) {
-    if (index >= 0 && index < pendingCalibImages.length) {
-      pendingCalibImages.removeAt(index);
-      notifyListeners();
-    }
-  }
-
-  void clearPendingCalibImages() {
-    pendingCalibImages.clear();
-    notifyListeners();
-  }
-
-  /// Wysyła wszystkie obrazy ze staging na serwer, po czym czyści listę.
-  Future<bool> uploadAllPendingCalibImages() async {
-    if (pendingCalibImages.isEmpty || sessionId == null || deviceId.isEmpty) {
-      return false;
-    }
-    _setLoading(true);
-    final total = pendingCalibImages.length;
+  /// Broadcasts a synchronized calibration capture trigger to all devices.
+  Future<void> triggerCalibCapture({int delayMs = 3000}) async {
+    if (sessionId == null) return;
     try {
-      final toUpload = List.of(pendingCalibImages);
-      for (var i = 0; i < toUpload.length; i++) {
-        await _api.uploadCalibImage(sessionId!, deviceId, toUpload[i].bytes);
+      await _api.triggerCalibCapture(sessionId!, delayMs);
+      _log.info('Wysłano trigger kalibracyjny (delay=${delayMs}ms)');
+    } catch (e, st) {
+      _log.warn('Nie udało się wyzwolić triggera kalibracyjnego (sesja $sessionId)', e, st);
+      _setError(e.toString());
+    }
+  }
+
+  /// Uploads a single calibration image immediately (used after synchronized capture).
+  Future<bool> uploadCalibImageNow(Uint8List bytes) async {
+    if (sessionId == null || deviceId.isEmpty) return false;
+    try {
+      final resp = await _api.uploadCalibImage(sessionId!, deviceId, bytes);
+      final newTotal = resp['total_frames'] as int?;
+      if (newTotal != null && session != null) {
+        session = session!.copyWithDevices(
+          session!.devices
+              .map((d) => d.deviceId == deviceId
+                  ? d.copyWith(calibFrameCount: newTotal)
+                  : d)
+              .toList(),
+        );
+        notifyListeners();
       }
-      pendingCalibImages.clear();
-      await refreshSession();
-      _log.info('Przesłano $total klatek kalibracyjnych (device=$deviceId)');
-      _setLoading(false);
+      _log.info('Przesłano klatkę kalibracyjną (device=$deviceId, total=$newTotal)');
       return true;
     } catch (e, st) {
-      _log.warn('Przesyłanie klatek kalibracyjnych nie powiodło się '
-          '(device=$deviceId, $total w kolejce)', e, st);
+      _log.warn('Przesyłanie klatki kalibracyjnej nie powiodło się '
+          '(device=$deviceId)', e, st);
       _setError(e.toString());
       return false;
     }

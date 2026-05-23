@@ -33,6 +33,21 @@ class DeviceInfo {
         captureFrameCount: j['capture_frame_count'] as int? ?? 0,
       );
 
+  DeviceInfo copyWith({
+    bool? wsConnected,
+    int? calibFrameCount,
+    int? captureFrameCount,
+  }) =>
+      DeviceInfo(
+        deviceId: deviceId,
+        mac: mac,
+        isLeader: isLeader,
+        joinedAt: joinedAt,
+        wsConnected: wsConnected ?? this.wsConnected,
+        calibFrameCount: calibFrameCount ?? this.calibFrameCount,
+        captureFrameCount: captureFrameCount ?? this.captureFrameCount,
+      );
+
   static const empty = DeviceInfo(
     deviceId: '', mac: '', isLeader: false,
     joinedAt: 0, wsConnected: false,
@@ -66,6 +81,15 @@ class SessionData {
         createdAt: (j['created_at'] as num).toDouble(),
         hasCalibration: j['has_calibration'] as bool? ?? false,
         hasMeasurement: j['has_measurement'] as bool? ?? false,
+      );
+
+  SessionData copyWithDevices(List<DeviceInfo> devices) => SessionData(
+        sessionId: sessionId,
+        state: state,
+        devices: devices,
+        createdAt: createdAt,
+        hasCalibration: hasCalibration,
+        hasMeasurement: hasMeasurement,
       );
 
   bool get isIdle => state == 'IDLE';

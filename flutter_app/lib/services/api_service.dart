@@ -176,6 +176,16 @@ class ApiService {
   // Przechwytywanie
   // -------------------------------------------------------------------------
 
+  Future<Map<String, dynamic>> triggerCalibCapture(String sid, int delayMs) async {
+    final r = await http.post(
+      _uri('/sessions/$sid/calibration/trigger'),
+      headers: _jsonHeaders(),
+      body: jsonEncode({'delay_ms': delayMs}),
+    );
+    await _checkStatus(r);
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
   Future<Map<String, dynamic>> triggerCapture(String sid, int delayMs) async {
     final r = await http.post(
       _uri('/sessions/$sid/capture/trigger'),
