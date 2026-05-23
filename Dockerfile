@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy pipeline modules (imported by backend/tasks.py at runtime)
 COPY calibration.py disparity.py pallet.py measurement.py \
-     pipeline.py pointcloud.py config.py ./
+     pipeline.py pointcloud.py config.py logging_setup.py ./
 
 # Copy FastAPI backend package
 COPY backend/ ./backend/
