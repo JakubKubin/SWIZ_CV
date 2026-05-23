@@ -45,9 +45,13 @@ class _CaptureScreenState extends State<CaptureScreen> {
   }
 
   void _checkExistingTrigger() {
-    if (_appState.captureTriggerAt != null) {
-      _startCountdown();
-    }
+    // Po pierwszej klatce - _startCountdown wywołuje setState, więc nie może
+    // zostać wywołane synchronicznie w initState.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _appState.captureTriggerAt != null) {
+        _startCountdown();
+      }
+    });
   }
 
   void _startCountdown() {
@@ -56,9 +60,25 @@ class _CaptureScreenState extends State<CaptureScreen> {
     final offset = _appState.serverTimeOffset;
     _appState.clearCaptureTrigger();
 
-    _countdownTimer = Timer.periodic(const Duration(milliseconds: 50), (t) {
+    int remainingMs() {
       final now = DateTime.now().millisecondsSinceEpoch / 1000.0;
-      final remaining = ((triggerAt - now - offset) * 1000).round();
+      return ((triggerAt - now - offset) * 1000).round();
+    }
+
+    // Ignoruj nieaktualne wyzwolenia (np. odebrane gdy ekran był zamknięty) -
+    // nie otwieramy automatycznie aparatu dla momentu, który już minął.
+    if (remainingMs() <= 0) {
+      setState(() => _remainingMs = 0);
+      return;
+    }
+
+    setState(() => _remainingMs = remainingMs());
+    _countdownTimer = Timer.periodic(const Duration(milliseconds: 50), (t) {
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
+      final remaining = remainingMs();
       if (remaining <= 0) {
         t.cancel();
         setState(() => _remainingMs = 0);
@@ -125,11 +145,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
     final tt = theme.textTheme;
     final session = state.session;
 
-    final myCaptures = session?.devices
-            .where((d) => d.deviceId == state.deviceId)
-            .firstOrNull
-            ?.captureFrameCount ??
-        0;
+    final myCaptures = state.myDevice?.captureFrameCount ?? 0;
 
     final allCaptured = session?.allCaptured ?? false;
     final isCountingDown = _remainingMs > 0;
@@ -148,22 +164,12 @@ class _CaptureScreenState extends State<CaptureScreen> {
       body: ListView(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         children: [
-          if (state.error != null)
-            AppBanner(
-              color: cs.errorContainer,
-              textColor: cs.onErrorContainer,
-              icon: Icons.error_outline,
-              message: state.error!,
-              onClose: state.clearError,
-            ),
-          if (state.info != null)
-            AppBanner(
-              color: cs.secondaryContainer,
-              textColor: cs.onSecondaryContainer,
-              icon: Icons.info_outline,
-              message: state.info!,
-              onClose: state.clearInfo,
-            ),
+          AppBanners(
+            error: state.error,
+            info: state.info,
+            onClearError: state.clearError,
+            onClearInfo: state.clearInfo,
+          ),
 
           // Countdown display
           if (isCountingDown)

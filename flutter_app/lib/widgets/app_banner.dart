@@ -1,5 +1,49 @@
 import 'package:flutter/material.dart';
 
+/// Renderuje wspólne bannery błędu i informacji (jeśli ustawione).
+/// Zastępuje powtarzany blok `if (error != null) ... if (info != null) ...`
+/// na ekranach sesji, kalibracji i przechwycenia.
+class AppBanners extends StatelessWidget {
+  final String? error;
+  final String? info;
+  final VoidCallback onClearError;
+  final VoidCallback onClearInfo;
+
+  const AppBanners({
+    super.key,
+    required this.error,
+    required this.info,
+    required this.onClearError,
+    required this.onClearInfo,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (error != null)
+          AppBanner(
+            color: cs.errorContainer,
+            textColor: cs.onErrorContainer,
+            icon: Icons.error_outline,
+            message: error!,
+            onClose: onClearError,
+          ),
+        if (info != null)
+          AppBanner(
+            color: cs.secondaryContainer,
+            textColor: cs.onSecondaryContainer,
+            icon: Icons.info_outline,
+            message: info!,
+            onClose: onClearInfo,
+          ),
+      ],
+    );
+  }
+}
+
 class AppBanner extends StatelessWidget {
   final Color color;
   final Color textColor;

@@ -58,9 +58,28 @@ class BoundingBox:
 
 
 @dataclass
+class VolumeEstimate:
+    """Trzy komplementarne szacunki objetosci obiektu (wszystko w mm^3).
+
+    Stereo widzi tylko przednia/gorna powierzchnie obiektu (tyl jest zaslonity),
+    dlatego liczymy trzy szacunki o roznych zalozeniach:
+      - voxel_mm3: bryla pelna od palety do obserwowanej gory (najbardziej realistyczny)
+      - bbox_mm3:  W*L*H prostopadloscianu (gorne ograniczenie)
+      - hull_mm3:  objetosc otoczki wypuklej widocznych punktow (zwykle niedoszacowanie)
+    """
+    bbox_mm3: float
+    voxel_mm3: float
+    hull_mm3: float | None       # None gdy scipy niedostepne lub chmura zdegenerowana
+    voxel_cell_mm: float         # rozmiar komorki uzyty do integracji height-field
+    n_voxel_cells: int           # liczba zajetych komorek siatki XY
+    fill_ratio: float            # voxel_mm3 / bbox_mm3 - "pelnosc" bryly w [0..1]
+
+
+@dataclass
 class MeasurementResult:
-    """Wynik pomiaru obiektu - bbox, punkty i metadane do walidacji."""
+    """Wynik pomiaru obiektu - bbox, objetosc, punkty i metadane do walidacji."""
     bbox: BoundingBox
+    volume: VolumeEstimate      # szacunki objetosci obiektu
     object_pts: np.ndarray      # (M,3) punkty obiektu w ukladzie palety [mm]
     contour_pts: np.ndarray     # (K,2) wierzcholki convex hull w plaszczyznie XY
     pallet_result: PalletDetectionResult  # oryginalny wynik detekcji palety
@@ -172,6 +191,117 @@ def extract_3d_contour(xyz_object: np.ndarray) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
+# Estymacja objetosci
+# ---------------------------------------------------------------------------
+
+def compute_voxel_volume(
+    xyz_object: np.ndarray,
+    cell_mm: float = 10.0,
+) -> tuple[float, int]:
+    """Objetosc metoda kolumnowa (height-field) - calka wysokosci po footprintcie XY.
+
+    Dzielimy rzut obiektu na plaszczyzne XY na kwadratowe komorki cell_mm x cell_mm.
+    Dla kazdej zajetej komorki bierzemy max(Z) punktow w niej, co reprezentuje
+    gorna powierzchnie obiektu, i mnozymy przez pole komorki. Suma to objetosc
+    bryly pelnej od powierzchni palety (Z=0) do obserwowanej gory.
+
+    Uwaga: calkujemy od Z=0 (paleta), a nie od z_min obiektu. BoundingBox.height
+    liczy z_max - z_min (z_min ~ noise_floor 20-25 mm), wiec objetosc kolumnowa
+    swiadomie obejmuje rowniez warstwe przy palecie - fizycznie poprawne dla
+    obiektu stojacego na palecie.
+
+    Args:
+        xyz_object: (M,3) punkty obiektu w ukladzie palety [mm], Z = wysokosc nad paleta
+        cell_mm:    rozmiar komorki siatki XY [mm]
+
+    Returns:
+        (volume_mm3, n_zajetych_komorek)
+    """
+    if len(xyz_object) == 0:
+        return 0.0, 0
+
+    x = xyz_object[:, 0]
+    y = xyz_object[:, 1]
+    z = np.clip(xyz_object[:, 2], 0.0, None)  # wysokosc liczona od palety, nie ujemna
+
+    ix = np.floor((x - x.min()) / cell_mm).astype(np.int64)
+    iy = np.floor((y - y.min()) / cell_mm).astype(np.int64)
+    n_y = int(iy.max()) + 1
+    flat = ix * n_y + iy  # plaski indeks komorki
+
+    # Dla kazdej komorki max(Z): np.maximum.at akumuluje maksimum po powtarzajacych
+    # sie indeksach (rozne punkty wpadajace do tej samej komorki).
+    cell_max = np.zeros(int(flat.max()) + 1, dtype=np.float64)
+    np.maximum.at(cell_max, flat, z)
+
+    occupied = np.unique(flat)
+    volume_mm3 = float(cell_max[occupied].sum() * cell_mm * cell_mm)
+    return volume_mm3, int(len(occupied))
+
+
+def compute_hull_volume(xyz_object: np.ndarray) -> float | None:
+    """Objetosc otoczki wypuklej 3D punktow obiektu (scipy.spatial.ConvexHull).
+
+    Zwraca objetosc geometrycznej otoczki widocznych punktow. Poniewaz stereo
+    rejestruje tylko przednia/gorna powierzchnie, otoczka zwykle niedoszacowuje
+    rzeczywistej objetosci (brak tylnej sciany).
+
+    Returns:
+        objetosc [mm^3] lub None gdy scipy niedostepne, za malo punktow
+        (<4) albo chmura zdegenerowana (wspolplaszczyznowa - QhullError).
+    """
+    if len(xyz_object) < 4:
+        return None
+    try:
+        from scipy.spatial import ConvexHull
+        return float(ConvexHull(xyz_object).volume)
+    except ImportError:
+        log.warning("scipy niedostepne - pomijam objetosc convex hull")
+        return None
+    except Exception as e:
+        # QhullError przy zdegenerowanej (wspolplaszczyznowej) chmurze
+        log.warning("Nie udalo sie policzyc convex hull: %s", e)
+        return None
+
+
+def estimate_volume(
+    xyz_object: np.ndarray,
+    bbox: BoundingBox,
+    cell_mm: float = 10.0,
+) -> VolumeEstimate:
+    """Liczy trzy szacunki objetosci obiektu: voxel-column, bbox i convex hull.
+
+    Args:
+        xyz_object: (M,3) punkty obiektu w ukladzie palety [mm]
+        bbox:       bounding box obiektu z compute_bounding_box()
+        cell_mm:    rozmiar komorki dla metody kolumnowej [mm]
+
+    Returns:
+        VolumeEstimate z trzema szacunkami i wskaznikiem fill_ratio
+    """
+    bbox_mm3 = bbox.width * bbox.length * bbox.height
+    voxel_mm3, n_cells = compute_voxel_volume(xyz_object, cell_mm)
+    hull_mm3 = compute_hull_volume(xyz_object)
+    fill_ratio = float(voxel_mm3 / bbox_mm3) if bbox_mm3 > 0 else 0.0
+
+    log.info(
+        "Objetosc: voxel=%.0f mm^3 bbox=%.0f mm^3 hull=%s fill=%.0f%%",
+        voxel_mm3, bbox_mm3,
+        f"{hull_mm3:.0f} mm^3" if hull_mm3 is not None else "n/d",
+        100 * fill_ratio,
+    )
+
+    return VolumeEstimate(
+        bbox_mm3=bbox_mm3,
+        voxel_mm3=voxel_mm3,
+        hull_mm3=hull_mm3,
+        voxel_cell_mm=cell_mm,
+        n_voxel_cells=n_cells,
+        fill_ratio=fill_ratio,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Glowna funkcja pomiaru
 # ---------------------------------------------------------------------------
 
@@ -209,6 +339,7 @@ def measure_object(
 
     object_pts = xyz_roi[obj_mask]
     bbox = compute_bounding_box(object_pts)
+    volume = estimate_volume(object_pts, bbox)
     contour_pts = extract_3d_contour(object_pts)
 
     log.info(
@@ -218,6 +349,7 @@ def measure_object(
 
     return MeasurementResult(
         bbox=bbox,
+        volume=volume,
         object_pts=object_pts,
         contour_pts=contour_pts,
         pallet_result=pallet_result,
@@ -315,6 +447,14 @@ def generate_report(result: MeasurementResult, validation: ValidationReport) -> 
     sep = "=" * 60
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
     bbox = result.bbox
+    vol = result.volume
+
+    # 1 litr (dm^3) = 1e6 mm^3
+    hull_line = (
+        f"  Convex hull:   {vol.hull_mm3:>12.0f} mm^3 = {vol.hull_mm3/1e6:6.2f} l"
+        if vol.hull_mm3 is not None
+        else "  Convex hull:   niedostepna (scipy brak / chmura zdegenerowana)"
+    )
 
     lines = [
         "",
@@ -333,6 +473,12 @@ def generate_report(result: MeasurementResult, validation: ValidationReport) -> 
         f"  Dlugosc   (Y): {bbox.length:>8.1f} mm",
         f"  Wysokosc  (Z): {bbox.height:>8.1f} mm",
         f"  Liczba pkt.:   {result.n_object_pts}",
+        "",
+        "--- Objetosc obiektu ---",
+        f"  Voxel-column:  {vol.voxel_mm3:>12.0f} mm^3 = {vol.voxel_mm3/1e6:6.2f} l  (komorka {vol.voxel_cell_mm:.0f} mm, {vol.n_voxel_cells} kom.)",
+        f"  Bounding box:  {vol.bbox_mm3:>12.0f} mm^3 = {vol.bbox_mm3/1e6:6.2f} l",
+        hull_line,
+        f"  Wsk. pelnosci: {100*vol.fill_ratio:.1f} % (voxel / bbox)",
         "",
         "--- Walidacja ---",
     ]

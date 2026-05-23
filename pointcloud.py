@@ -155,6 +155,16 @@ def filter_pointcloud(
 # Zapis PLY (dziala bez Open3D - czysty Python/NumPy)
 # ---------------------------------------------------------------------------
 
+def _ply_header(n: int, has_color: bool, binary: bool) -> str:
+    """Buduje naglowek pliku PLY wspolny dla wersji ASCII i binarnej."""
+    fmt = "binary_little_endian 1.0" if binary else "ascii 1.0"
+    header = f"ply\nformat {fmt}\nelement vertex {n}\n"
+    header += "property float x\nproperty float y\nproperty float z\n"
+    if has_color:
+        header += "property uchar red\nproperty uchar green\nproperty uchar blue\n"
+    return header + "end_header\n"
+
+
 def save_ply(path: str, xyz: np.ndarray, colors: np.ndarray | None = None):
     """Zapisuje chmure punktow do pliku PLY (ASCII).
 
@@ -171,13 +181,7 @@ def save_ply(path: str, xyz: np.ndarray, colors: np.ndarray | None = None):
     has_color = colors is not None
 
     with open(path, "w") as f:
-        f.write("ply\nformat ascii 1.0\n")
-        f.write(f"element vertex {n}\n")
-        f.write("property float x\nproperty float y\nproperty float z\n")
-        if has_color:
-            f.write("property uchar red\nproperty uchar green\nproperty uchar blue\n")
-        f.write("end_header\n")
-
+        f.write(_ply_header(n, has_color, binary=False))
         for i in range(n):
             x, y, z = xyz[i]
             line = f"{x:.3f} {y:.3f} {z:.3f}"
@@ -206,14 +210,7 @@ def save_ply_binary(path: str, xyz: np.ndarray, colors: np.ndarray | None = None
     has_color = colors is not None
 
     with open(path, "wb") as f:
-        header = "ply\nformat binary_little_endian 1.0\n"
-        header += f"element vertex {n}\n"
-        header += "property float x\nproperty float y\nproperty float z\n"
-        if has_color:
-            header += "property uchar red\nproperty uchar green\nproperty uchar blue\n"
-        header += "end_header\n"
-        f.write(header.encode("ascii"))
-
+        f.write(_ply_header(n, has_color, binary=True).encode("ascii"))
         for i in range(n):
             f.write(struct.pack("<fff", *xyz[i].tolist()))
             if has_color:
@@ -226,45 +223,49 @@ def save_ply_binary(path: str, xyz: np.ndarray, colors: np.ndarray | None = None
 # Prosta wizualizacja 2D chmury (rzut z gory i z boku) - bez Open3D
 # ---------------------------------------------------------------------------
 
-def render_topdown(
+def _render_projection(
     xyz: np.ndarray,
-    colors: np.ndarray | None = None,
-    resolution_mm: float = 5.0,
+    colors: np.ndarray | None,
+    h_axis: int,
+    v_axis: int,
     canvas_size: int = 600,
 ) -> np.ndarray:
-    """Rzut chmury punktow z gory (plaszczyzna X-Z) jako obraz BGR.
+    """Rzutuje chmure na wybrana pare osi i zwraca obraz BGR.
 
-    Os Z odpowiada glebokosci (odleglosci od kamery), os X to przesunięcie
-    poziome. Przydatny do szybkiej weryfikacji ksztaltu i rozlozenia obiektu
-    bez potrzeby uzywania narzedzi do wizualizacji 3D.
+    Os pozioma obrazu = h_axis, os pionowa = v_axis (odwrocona, by wieksze
+    wartosci byly u gory). Wspolrzedne sa normalizowane do [0, canvas_size-1].
+    Operacja jest w pelni wektorowa - przy kolizji pikseli wygrywa ostatni punkt.
 
     Args:
         xyz:         (N, 3) chmura punktow [mm]
         colors:      (N, 3) kolory RGB lub None (szary)
+        h_axis:      indeks osi (0=X,1=Y,2=Z) odwzorowanej na poziom obrazu
+        v_axis:      indeks osi odwzorowanej na pion obrazu
         canvas_size: rozmiar obrazu wyjsciowego [px]
     """
-    if len(xyz) == 0:
-        return np.zeros((canvas_size, canvas_size, 3), dtype=np.uint8)
-
-    x, z = xyz[:, 0], xyz[:, 2]
     canvas = np.zeros((canvas_size, canvas_size, 3), dtype=np.uint8)
+    if len(xyz) == 0:
+        return canvas
 
-    # Normalizacja wspolrzednych do zakresu [0, canvas_size-1] px
-    x_norm = ((x - x.min()) / max(x.max()-x.min(), 1e-3) * (canvas_size - 1)).astype(int)
-    z_norm = ((z - z.min()) / max(z.max()-z.min(), 1e-3) * (canvas_size - 1)).astype(int)
-    # Odwrocenie osi pionowej: wieksze Z (dalej) -> na dole obrazu
-    z_norm = canvas_size - 1 - z_norm
+    h, v = xyz[:, h_axis], xyz[:, v_axis]
+    h_norm = ((h - h.min()) / max(h.max() - h.min(), 1e-3) * (canvas_size - 1)).astype(int)
+    v_norm = ((v - v.min()) / max(v.max() - v.min(), 1e-3) * (canvas_size - 1)).astype(int)
+    v_norm = canvas_size - 1 - v_norm  # wieksze wartosci osi -> u gory obrazu
 
-    for i in range(len(xyz)):
-        px, py = x_norm[i], z_norm[i]
-        if 0 <= px < canvas_size and 0 <= py < canvas_size:
-            if colors is not None:
-                r, g, b = colors[i]
-                canvas[py, px] = [int(b), int(g), int(r)]  # BGR
-            else:
-                canvas[py, px] = [200, 200, 200]
-
+    if colors is not None:
+        canvas[v_norm, h_norm] = colors[:, ::-1]  # RGB -> BGR
+    else:
+        canvas[v_norm, h_norm] = (200, 200, 200)
     return canvas
+
+
+def render_topdown(
+    xyz: np.ndarray,
+    colors: np.ndarray | None = None,
+    canvas_size: int = 600,
+) -> np.ndarray:
+    """Rzut z gory (plaszczyzna X-Z): X -> poziom, Z (glebokos) -> pion."""
+    return _render_projection(xyz, colors, h_axis=0, v_axis=2, canvas_size=canvas_size)
 
 
 def render_sideview(
@@ -272,36 +273,8 @@ def render_sideview(
     colors: np.ndarray | None = None,
     canvas_size: int = 600,
 ) -> np.ndarray:
-    """Rzut chmury z boku (plaszczyzna X-Y) jako obraz BGR.
-
-    Os Y odpowiada wysokosci (w gore = mniejsze wartosci Y w ukladzie kamery),
-    os X to przesuniecie poziome. Przydatny do oceny wysokosci obiektu.
-
-    Args:
-        xyz:         (N, 3) chmura punktow [mm]
-        colors:      (N, 3) kolory RGB lub None (szary)
-        canvas_size: rozmiar obrazu wyjsciowego [px]
-    """
-    if len(xyz) == 0:
-        return np.zeros((canvas_size, canvas_size, 3), dtype=np.uint8)
-
-    x, y = xyz[:, 0], xyz[:, 1]
-    canvas = np.zeros((canvas_size, canvas_size, 3), dtype=np.uint8)
-
-    x_norm = ((x - x.min()) / max(x.max()-x.min(), 1e-3) * (canvas_size - 1)).astype(int)
-    y_norm = ((y - y.min()) / max(y.max()-y.min(), 1e-3) * (canvas_size - 1)).astype(int)
-    y_norm = canvas_size - 1 - y_norm
-
-    for i in range(len(xyz)):
-        px, py = x_norm[i], y_norm[i]
-        if 0 <= px < canvas_size and 0 <= py < canvas_size:
-            if colors is not None:
-                r, g, b = colors[i]
-                canvas[py, px] = [int(b), int(g), int(r)]
-            else:
-                canvas[py, px] = [200, 200, 200]
-
-    return canvas
+    """Rzut z boku (plaszczyzna X-Y): X -> poziom, Y (wysokos) -> pion."""
+    return _render_projection(xyz, colors, h_axis=0, v_axis=1, canvas_size=canvas_size)
 
 
 # ---------------------------------------------------------------------------

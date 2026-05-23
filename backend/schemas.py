@@ -32,6 +32,8 @@ class SessionOut(BaseModel):
     state: str
     devices: list[DeviceOut]
     created_at: float
+    has_calibration: bool = False  # czy sesja ma zapisane parametry kalibracji
+    has_measurement: bool = False  # czy sesja ma zapisany wynik pomiaru
 
 
 # ---------------------------------------------------------------------------
@@ -66,6 +68,10 @@ class MeasurementOut(BaseModel):
     width_mm: float
     length_mm: float
     height_mm: float
+    volume_voxel_mm3: float
+    volume_bbox_mm3: float
+    volume_hull_mm3: Optional[float] = None
+    fill_ratio: float
     pallet_rms_mm: float
     n_object_pts: int
     n_pallet_inliers: int
@@ -80,7 +86,3 @@ class MeasurementOut(BaseModel):
 class HealthOut(BaseModel):
     status: str = "ok"
     version: str = "1.0.0"
-
-
-class ErrorOut(BaseModel):
-    detail: str

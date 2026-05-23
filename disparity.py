@@ -74,16 +74,38 @@ def rectify_pair(
     poziomych liniach epipolarnych - warunek konieczny dla poprawnego
     dzialania algorytmu SGBM.
 
+    Mapy rektyfikacji (a wiec i macierz Q) sa wyznaczone dla rozdzielczosci uzytej
+    podczas kalibracji (stereo.left.image_size). Jezeli obrazy wejsciowe maja inna
+    rozdzielczosc, sa automatycznie skalowane do rozmiaru kalibracji - dzieki temu
+    macierz Q i mapy zawsze pasuja (bez tego glebia jest bledna, co wymagalo
+    wczesniej recznej korekty Q).
+
     Args:
         stereo:     StereoParams z load_params(..., stereo=True)
         left:       obraz lewej kamery (BGR lub grayscale)
         right:      obraz prawej kamery
-        image_size: (width, height) - jesli None, brane z stereo.left.image_size
+        image_size: (width, height) docelowy rozmiar rektyfikacji; jesli None,
+                    brany z stereo.left.image_size (rozdzielczosc kalibracji)
 
     Returns:
         (left_rect, right_rect) - rektyfikowane obrazy
     """
-    map1L, map2L, map1R, map2R = stereo.rectify_maps(image_size)
+    size = image_size or stereo.left.image_size
+
+    # Obrazy wejsciowe musza miec rozdzielczosc zgodna z mapami rektyfikacji.
+    # Jezeli sie roznia (np. zdjecie pomiarowe w innej rozdzielczosci niz kalibracja),
+    # skalujemy je do rozmiaru kalibracji, zeby macierz Q pozostala poprawna.
+    def _match(img: np.ndarray, name: str) -> np.ndarray:
+        if (img.shape[1], img.shape[0]) != tuple(size):
+            log.warning("Rozdzielczosc %s %s != rozmiar kalibracji %s - skaluje",
+                        name, (img.shape[1], img.shape[0]), tuple(size))
+            return cv2.resize(img, tuple(size))
+        return img
+
+    left  = _match(left,  "lewego obrazu")
+    right = _match(right, "prawego obrazu")
+
+    map1L, map2L, map1R, map2R = stereo.rectify_maps(size)
     left_rect  = cv2.remap(left,  map1L, map2L, cv2.INTER_LINEAR)
     right_rect = cv2.remap(right, map1R, map2R, cv2.INTER_LINEAR)
     log.info("Rektyfikacja OK: %s -> %s", left.shape[:2], left_rect.shape[:2])

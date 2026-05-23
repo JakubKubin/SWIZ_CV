@@ -218,6 +218,54 @@ class _ResultsBody extends StatelessWidget {
 
         const SizedBox(height: 16),
 
+        // Volume estimates
+        Text('Objętość obiektu',
+            style: tt.labelMedium
+                ?.copyWith(color: cs.onSurfaceVariant, letterSpacing: 0.3)),
+        const SizedBox(height: 8),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                _MetricRow(
+                  label: 'Voxel-column (height-field)',
+                  value: '${result.volumeVoxelL.toStringAsFixed(2)} l',
+                  ok: result.volumeVoxelMm3 > 0,
+                ),
+                Divider(
+                    height: 20,
+                    color: cs.outlineVariant.withValues(alpha: 0.5)),
+                _MetricRow(
+                  label: 'Bounding box (W×L×H)',
+                  value: '${result.volumeBboxL.toStringAsFixed(2)} l',
+                  ok: result.volumeBboxMm3 > 0,
+                ),
+                Divider(
+                    height: 20,
+                    color: cs.outlineVariant.withValues(alpha: 0.5)),
+                _MetricRow(
+                  label: 'Convex hull',
+                  value: result.volumeHullL == null
+                      ? 'niedostępna'
+                      : '${result.volumeHullL!.toStringAsFixed(2)} l',
+                  ok: result.volumeHullL != null,
+                ),
+                Divider(
+                    height: 20,
+                    color: cs.outlineVariant.withValues(alpha: 0.5)),
+                _MetricRow(
+                  label: 'Wskaźnik pełności (voxel / bbox)',
+                  value: '${(result.fillRatio * 100).toStringAsFixed(0)} %',
+                  ok: result.fillRatio > 0,
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        const SizedBox(height: 16),
+
         // Quality metrics
         Text('Jakość pomiaru',
             style: tt.labelMedium

@@ -64,22 +64,12 @@ class _SessionBody extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       children: [
-        if (appState.error != null)
-          AppBanner(
-            color: cs.errorContainer,
-            textColor: cs.onErrorContainer,
-            icon: Icons.error_outline,
-            message: appState.error!,
-            onClose: appState.clearError,
-          ),
-        if (appState.info != null)
-          AppBanner(
-            color: cs.secondaryContainer,
-            textColor: cs.onSecondaryContainer,
-            icon: Icons.info_outline,
-            message: appState.info!,
-            onClose: appState.clearInfo,
-          ),
+        AppBanners(
+          error: appState.error,
+          info: appState.info,
+          onClearError: appState.clearError,
+          onClearInfo: appState.clearInfo,
+        ),
 
         // State card
         Card(

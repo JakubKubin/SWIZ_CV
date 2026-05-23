@@ -27,3 +27,5 @@ LICENSE
 *.egg-info/
 .venv/
 venv/
+
+.claude

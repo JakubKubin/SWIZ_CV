@@ -64,10 +64,9 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
   Future<void> _uploadAll(AppState state) async {
     final ok = await state.uploadAllPendingCalibImages();
     if (mounted && ok) {
+      final total = state.myDevice?.calibFrameCount ?? 0;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text(
-                'Przesłano ${state.session?.devices.firstWhere((d) => d.deviceId == state.deviceId, orElse: () => state.session!.devices.first).calibFrameCount ?? "?"} klatek łącznie')),
+        SnackBar(content: Text('Przesłano — łącznie $total klatek')),
       );
     }
   }
@@ -90,11 +89,7 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
     final tt = theme.textTheme;
     final session = state.session;
 
-    final myFrames = session?.devices
-            .where((d) => d.deviceId == state.deviceId)
-            .firstOrNull
-            ?.calibFrameCount ??
-        0;
+    final myFrames = state.myDevice?.calibFrameCount ?? 0;
     final minFrames = session?.minCalibFrames ?? 0;
     final canCalibrate = state.isLeader && minFrames >= 3;
     final pending = state.pendingCalibImages;
@@ -114,22 +109,12 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
       body: ListView(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         children: [
-          if (state.error != null)
-            AppBanner(
-              color: cs.errorContainer,
-              textColor: cs.onErrorContainer,
-              icon: Icons.error_outline,
-              message: state.error!,
-              onClose: state.clearError,
-            ),
-          if (state.info != null)
-            AppBanner(
-              color: cs.secondaryContainer,
-              textColor: cs.onSecondaryContainer,
-              icon: Icons.info_outline,
-              message: state.info!,
-              onClose: state.clearInfo,
-            ),
+          AppBanners(
+            error: state.error,
+            info: state.info,
+            onClearError: state.clearError,
+            onClearInfo: state.clearInfo,
+          ),
 
           // Instructions
           Card(

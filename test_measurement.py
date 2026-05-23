@@ -9,6 +9,7 @@ Konwencja ukladu kamery:
   - paleta lezy na plaszczynie Z=pallet_z, jej normalna wskazuje ku kamerze (Z maleje)
   - obiekty sa blizej kamery niz paleta: Z_obj < pallet_z
 """
+import cv2
 import numpy as np
 import pytest
 
@@ -22,11 +23,15 @@ from pallet import (
 )
 from measurement import (
     BoundingBox,
+    VolumeEstimate,
     MeasurementResult,
     ValidationReport,
     segment_object,
     compute_bounding_box,
     extract_3d_contour,
+    compute_voxel_volume,
+    compute_hull_volume,
+    estimate_volume,
     measure_object,
     validate_measurement,
     generate_report,
@@ -365,6 +370,79 @@ class TestContour:
 
 
 # ===========================================================================
+# TestVolume
+# ===========================================================================
+
+class TestVolume:
+
+    def _filled_box(self, bw, bl, bh, n=8000, seed=11):
+        """Gesto wypelniony prostopadloscian w ukladzie palety (Z od 0 do bh)."""
+        rng = np.random.RandomState(seed)
+        return np.column_stack([
+            rng.uniform(-bw/2, bw/2, n),
+            rng.uniform(-bl/2, bl/2, n),
+            rng.uniform(0.0, bh, n),
+        ]).astype(np.float32)
+
+    def test_voxel_close_to_bbox_for_filled_box(self):
+        bw, bl, bh = 300.0, 200.0, 150.0
+        xyz = self._filled_box(bw, bl, bh)
+        bbox = compute_bounding_box(xyz)
+        vol = estimate_volume(xyz, bbox, cell_mm=10.0)
+
+        # Pelny prostopadloscian: voxel-column ~ bbox (footprint pelny, stala wysokosc)
+        assert abs(vol.voxel_mm3 - vol.bbox_mm3) / vol.bbox_mm3 < 0.15
+        assert 0.85 <= vol.fill_ratio <= 1.15
+
+    def test_bbox_volume_matches_dims(self):
+        bw, bl, bh = 300.0, 200.0, 150.0
+        xyz = self._filled_box(bw, bl, bh)
+        bbox = compute_bounding_box(xyz)
+        vol = estimate_volume(xyz, bbox)
+        assert abs(vol.bbox_mm3 - bbox.width * bbox.length * bbox.height) < 1e-3
+
+    def test_voxel_volume_units_sanity(self):
+        # Pudlo 300x200x150 mm ~ 9 000 000 mm^3 = 9 litrow
+        xyz = self._filled_box(300.0, 200.0, 150.0)
+        vol_mm3, n_cells = compute_voxel_volume(xyz, cell_mm=10.0)
+        assert abs(vol_mm3 / 1e6 - 9.0) < 1.5
+        assert n_cells > 0
+
+    def test_partial_footprint_below_bbox(self):
+        # Dwa rozsuniete slupki - footprint duzo mniejszy niz bbox obejmujacy oba
+        rng = np.random.RandomState(3)
+        n = 2000
+        col_a = np.column_stack([rng.uniform(-150, -100, n), rng.uniform(-50, 50, n),
+                                 rng.uniform(0, 100, n)])
+        col_b = np.column_stack([rng.uniform(100, 150, n), rng.uniform(-50, 50, n),
+                                 rng.uniform(0, 100, n)])
+        xyz = np.vstack([col_a, col_b]).astype(np.float32)
+        bbox = compute_bounding_box(xyz)
+        vol = estimate_volume(xyz, bbox, cell_mm=10.0)
+
+        assert vol.voxel_mm3 < vol.bbox_mm3
+        assert vol.fill_ratio < 0.7
+
+    def test_hull_none_for_too_few_points(self):
+        pts = np.array([[0.0, 0.0, 10.0], [10.0, 0.0, 10.0], [0.0, 10.0, 10.0]],
+                       dtype=np.float32)  # tylko 3 punkty
+        assert compute_hull_volume(pts) is None
+
+    def test_hull_volume_close_to_box(self):
+        pytest.importorskip("scipy")
+        bw, bl, bh = 300.0, 200.0, 150.0
+        xyz = self._filled_box(bw, bl, bh)
+        hull = compute_hull_volume(xyz)
+        assert hull is not None
+        assert abs(hull - bw * bl * bh) / (bw * bl * bh) < 0.15
+
+    def test_empty_cloud_zero_voxel(self):
+        vol_mm3, n_cells = compute_voxel_volume(np.zeros((0, 3), dtype=np.float32))
+        assert vol_mm3 == 0.0
+        assert n_cells == 0
+
+
+# ===========================================================================
 # TestMeasureObject
 # ===========================================================================
 
@@ -384,6 +462,12 @@ class TestMeasureObject:
     def test_returns_measurement_result_type(self, measurement):
         meas, _ = measurement
         assert isinstance(meas, MeasurementResult)
+
+    def test_has_volume_estimate(self, measurement):
+        meas, _ = measurement
+        assert isinstance(meas.volume, VolumeEstimate)
+        assert meas.volume.voxel_mm3 > 0
+        assert meas.volume.bbox_mm3 > 0
 
     def test_width_within_tolerance(self, measurement):
         meas, expected = measurement
@@ -509,8 +593,9 @@ class TestReport:
         assert "Dlugosc" in report
         assert "Wysokosc" in report
 
-
-# ===========================================================================
-# Import cv2 (potrzebny dla extract_3d_contour - pointPolygonTest)
-# ===========================================================================
-import cv2
+    def test_report_contains_volume(self, report_data):
+        meas, val = report_data
+        report = generate_report(meas, val)
+        assert "Objetosc" in report
+        assert "Voxel-column" in report
+        assert "mm^3" in report

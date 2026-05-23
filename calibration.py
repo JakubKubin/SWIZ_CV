@@ -244,7 +244,13 @@ def _board_points() -> np.ndarray:
 def find_corners(image: np.ndarray) -> Optional[np.ndarray]:
     """Wykrywa narozniki szachownicy na obrazie z precyzja subpikselowa.
 
-    Strategia dwuetapowa:
+    Detekcja odbywa sie na kopii zmniejszonej do CORNER_DETECT_MAX_WIDTH (szybkosc
+    przy obrazach 3-4K z telefonow), ale wykryte narozniki sa NASTEPNIE przeskalowane
+    z powrotem do wspolrzednych oryginalnego obrazu i dorefinowane subpikselowo na
+    pelnej rozdzielczosci. Dzieki temu zwracane wspolrzedne sa zawsze w natywnej
+    rozdzielczosci - kalibracja i image_size pozostaja spojne (zob. collect_points).
+
+    Strategia dwuetapowa detekcji:
     1. findChessboardCornersSB - nowsza metoda z wbudowana precyzja subpikselowa,
        lepsza dla wysokich rozdzielczosci i trudnych warunkow oswietleniowych.
     2. findChessboardCorners + cornerSubPix - klasyczna metoda jako fallback,
@@ -254,37 +260,42 @@ def find_corners(image: np.ndarray) -> Optional[np.ndarray]:
         image: obraz BGR lub grayscale
 
     Returns:
-        tablica naroznikow (N,1,2) lub None jezeli wzorzec nie zostal wykryty
+        tablica naroznikow (N,1,2) we wspolrzednych ORYGINALNEGO obrazu,
+        lub None jezeli wzorzec nie zostal wykryty
     """
-    # Skalowanie do max 1920px: detekcja naroznikow na pelnej rozdzielczosci
-    # telefonow (3-4K) jest bardzo wolna bez poprawy jakosci kalibracji
-    h, w = image.shape[:2]
-    scale = 1.0
-    if w > 1920:
-        scale = 1920 / w
-        image = cv2.resize(image, (1920, int(h * scale)))
-
     # Konwersja do skali szarosci - algorytm detekcji naroznikow nie korzysta z koloru
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
+    gray_full = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
+
+    # Detekcja na kopii zmniejszonej (jesli obraz jest szerszy niz prog).
+    # scale = wspolczynnik z oryginalu do kopii roboczej; do przeliczenia narozników
+    # z powrotem mnozymy przez 1/scale.
+    h, w = gray_full.shape[:2]
+    scale = 1.0
+    gray = gray_full
+    if w > config.CORNER_DETECT_MAX_WIDTH:
+        scale = config.CORNER_DETECT_MAX_WIDTH / w
+        gray = cv2.resize(gray_full, (config.CORNER_DETECT_MAX_WIDTH, int(round(h * scale))))
 
     # Metoda SB: dokladniejsza, wbudowana precyzja subpikselowa w jednym przejsciu
     found, corners = cv2.findChessboardCornersSB(
         gray, (BOARD_ROWS, BOARD_COLS),
         flags=cv2.CALIB_CB_EXHAUSTIVE | cv2.CALIB_CB_ACCURACY,
     )
-    if found:
-        return corners
-
-    # Fallback: klasyczna metoda findChessboardCorners + reczny krok subpikselowy
-    found, corners = cv2.findChessboardCorners(
-        gray, (BOARD_ROWS, BOARD_COLS),
-        flags=cv2.CALIB_CB_ADAPTIVE_THRESH + cv2.CALIB_CB_NORMALIZE_IMAGE + cv2.CALIB_CB_FAST_CHECK,
-    )
+    if not found:
+        # Fallback: klasyczna metoda findChessboardCorners
+        found, corners = cv2.findChessboardCorners(
+            gray, (BOARD_ROWS, BOARD_COLS),
+            flags=cv2.CALIB_CB_ADAPTIVE_THRESH + cv2.CALIB_CB_NORMALIZE_IMAGE + cv2.CALIB_CB_FAST_CHECK,
+        )
     if not found:
         return None
-    # cornerSubPix doprecyzowuje polozenie naroznikow do ulamkow piksela
+
+    # Przeskalowanie naroznikow z powrotem do wspolrzednych oryginalu i finalne
+    # doprecyzowanie subpikselowe na pelnej rozdzielczosci (lepsza precyzja -> nizszy RMS)
+    if scale != 1.0:
+        corners = (corners.astype(np.float32) / scale)
     return cv2.cornerSubPix(
-        gray, corners,
+        gray_full, corners.astype(np.float32),
         config.CORNER_SUBPIX_WIN, config.CORNER_SUBPIX_ZERO_ZONE, CRITERIA,
     )
 
@@ -354,16 +365,16 @@ def collect_stereo_points(
             log.warning("Nie mozna wczytac pary: %s, %s", lp, rp)
             continue
 
-        # Skalowanie obu obrazow pary do tej samej rozdzielczosci - konieczne
-        # dla zgodnosci wymiarow przy stereoCalibrate i pozniejszej rektyfikacji
-        h, w = l_img.shape[:2]
-        if w > 1920:
-            scale = 1920 / w
-            l_img = cv2.resize(l_img, (1920, int(h * scale)))
-            r_img = cv2.resize(r_img, (1920, int(r_img.shape[0] * scale)))
-
+        # Kalibracja w natywnej rozdzielczosci: find_corners samo zmniejsza obraz
+        # tylko na czas detekcji i zwraca narozniki w pelnej skali. image_size
+        # bierzemy z lewego obrazu (stereoCalibrate uzywa jednego imageSize) -
+        # zakladamy, ze obie kamery maja te sama rozdzielczosc.
         if img_size is None:
             img_size = (l_img.shape[1], l_img.shape[0])
+        if (r_img.shape[1], r_img.shape[0]) != (l_img.shape[1], l_img.shape[0]):
+            log.warning("Rozne rozdzielczosci w parze (%s vs %s): %s, %s",
+                        (l_img.shape[1], l_img.shape[0]),
+                        (r_img.shape[1], r_img.shape[0]), lp, rp)
 
         lc, rc = find_corners(l_img), find_corners(r_img)
         if lc is None or rc is None:
@@ -415,6 +426,32 @@ def calibrate_single(image_paths: list[str]) -> CameraParams:
     return _calibrate_from_data(collect_points(image_paths))
 
 
+def baseline_warning(T: np.ndarray, rms: float) -> Optional[str]:
+    """Zwraca ostrzezenie diagnostyczne o jakosci geometrii stereo lub None.
+
+    Wykrywa dwa typowe problemy sesji pomiarowej:
+      1. Baza nie-pozioma: poprawne ustawienie to T ~ [|T|, 0, 0] (telefony w jednej
+         poziomej linii). Duze skladowe Y/Z oznaczaja, ze jeden telefon byl wysuniety
+         do przodu lub w gore - linie epipolarne nie sa poziome, co psuje SGBM.
+      2. Wysoki RMS stereo mimo dobrych kalibracji indywidualnych - zwykle oznacza,
+         ze telefony poruszyly sie miedzy klatkami (brak sztywnosci ukladu).
+    """
+    t = np.asarray(T, dtype=float).flatten()
+    tx, ty, tz = abs(t[0]), abs(t[1]), abs(t[2])
+    msgs = []
+    if tx > 1e-6 and max(ty, tz) > 0.2 * tx:
+        msgs.append(
+            f"baza stereo nie jest pozioma: T=[{t[0]:.0f}, {t[1]:.0f}, {t[2]:.0f}] mm "
+            f"(oczekiwane ~[{np.linalg.norm(t):.0f}, 0, 0]) - sprawdz ustawienie telefonow"
+        )
+    if rms > config.MAX_STEREO_REPROJ_ERROR:
+        msgs.append(
+            f"stereo RMS={rms:.2f} px > prog {config.MAX_STEREO_REPROJ_ERROR} px - "
+            f"telefony mogly poruszyc sie miedzy klatkami lub potrzeba wiecej par"
+        )
+    return "; ".join(msgs) if msgs else None
+
+
 def calibrate_stereo(
     left_paths: list[str], right_paths: list[str]
 ) -> StereoParams:
@@ -461,7 +498,14 @@ def calibrate_stereo(
         right_cam.camera_matrix, right_cam.dist_coeffs,
         stereo_data.image_size, criteria=CRITERIA, flags=cv2.CALIB_FIX_INTRINSIC,
     )
-    log.info("Stereo RMS reproj. error: %.4f px", rms)
+    log.info(
+        "RMS reproj.: lewa=%.4f px, prawa=%.4f px, stereo=%.4f px (rozdz. %dx%d)",
+        left_cam.reproj_error, right_cam.reproj_error, rms,
+        stereo_data.image_size[0], stereo_data.image_size[1],
+    )
+    warn = baseline_warning(T, rms)
+    if warn:
+        log.warning("Jakosc kalibracji stereo: %s", warn)
 
     # stereoRectify wyznacza macierze R1/R2/P1/P2/Q potrzebne do rektyfikacji
     # par zdjecien w czasie rzeczywistym. alpha=0 oznacza pelne wypelnienie

@@ -59,6 +59,13 @@ Pomocnicze metody:
 Globalny singleton (`store = SessionStore()`) przechowujący sesje w pamięci operacyjnej.
 Dostęp asynchroniczny przez `asyncio.Lock`. Nie używa Redisa — wystarczy do aktualnej skali.
 
+**Persystencja:** metadane każdej sesji (stan, urządzenia, wyniki kalibracji i pomiaru)
+są zapisywane do `data/{session_id}/session.json` po każdej mutacji (utworzenie, dołączenie,
+opuszczenie, upload klatki, zmiana stanu). Przy starcie `SessionStore` wczytuje wszystkie
+zapisane sesje z dysku, dzięki czemu użytkownicy mogą wrócić do swoich sesji po restarcie
+backendu. Pole `ws_connected` jest transientowe (po wczytaniu zawsze `False`). Dane są
+usuwane wyłącznie jawnie przez `DELETE /sessions/{id}` — opuszczenie sesji ich nie kasuje.
+
 ---
 
 ## tasks.py — Zadania w tle
@@ -133,6 +140,8 @@ SessionOut:
   state: str            # IDLE / CALIBRATING / READY / PROCESSING / DONE
   devices: list[DeviceOut]
   created_at: float     # Unix timestamp
+  has_calibration: bool # czy zapisano parametry kalibracji
+  has_measurement: bool # czy zapisano wynik pomiaru
 
 DeviceOut:
   device_id, mac, is_leader, joined_at
@@ -152,6 +161,10 @@ TriggerOut:
 MeasurementOut:
   validation_passed: bool
   width_mm, length_mm, height_mm: float
+  volume_voxel_mm3: float      # objętość metodą kolumnową (height-field)
+  volume_bbox_mm3: float       # objętość bounding box (W×L×H)
+  volume_hull_mm3: float|null  # objętość convex hull (null gdy niedostępna)
+  fill_ratio: float            # voxel / bbox — "pełność" bryły [0..1]
   pallet_rms_mm: float        # residuum płaszczyzny palety [mm]
   n_object_pts: int            # liczba punktów obiektu
   n_pallet_inliers: int        # liczba inlierów RANSAC palety

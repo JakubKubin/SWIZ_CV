@@ -102,6 +102,8 @@ def _session_to_out(session) -> SessionOut:
             for d in session.devices.values()
         ],
         created_at=session.created_at,
+        has_calibration=session.calib_result is not None,
+        has_measurement=session.meas_result is not None,
     )
 
 
@@ -111,6 +113,10 @@ def _meas_to_out(result) -> MeasurementOut:
         width_mm=result.width_mm,
         length_mm=result.length_mm,
         height_mm=result.height_mm,
+        volume_voxel_mm3=result.volume_voxel_mm3,
+        volume_bbox_mm3=result.volume_bbox_mm3,
+        volume_hull_mm3=result.volume_hull_mm3,
+        fill_ratio=result.fill_ratio,
         pallet_rms_mm=result.pallet_rms_mm,
         n_object_pts=result.n_object_pts,
         n_pallet_inliers=result.n_pallet_inliers,
@@ -184,6 +190,7 @@ async def join_session(session_id: str, body: JoinRequest):
     session.devices[body.device_id] = device
     session.calib_dir(body.device_id).mkdir(parents=True, exist_ok=True)
     session.capture_dir(body.device_id).mkdir(parents=True, exist_ok=True)
+    await store.save(session_id)
 
     log.info("[%s] Dołączyło urządzenie: %s (leader=%s)", session_id, body.device_id, body.is_leader)
 
@@ -209,10 +216,11 @@ async def delete_session(session_id: str):
 
 @app.delete("/sessions/{session_id}/devices/{device_id}", status_code=204, tags=["Sesje"])
 async def leave_session(session_id: str, device_id: str):
-    """Usuwa jedno urządzenie z sesji.
+    """Wypisuje jedno urządzenie z sesji (np. przy wyjściu z aplikacji).
 
-    Jeśli żadne urządzenie nie pozostało, sesja jest automatycznie usuwana
-    (wraz z danymi na dysku).
+    Sesja oraz jej dane (kalibracja, zdjęcia, wyniki) NIE są usuwane - dzięki
+    temu użytkownik może później wrócić do sesji i ponownie dołączyć tym samym
+    urządzeniem. Trwałe usunięcie wykonuje się jawnie przez DELETE /sessions/{id}.
     """
     session = await _get_or_404(session_id)
 
@@ -220,6 +228,7 @@ async def leave_session(session_id: str, device_id: str):
         raise HTTPException(status_code=404, detail=f"Urządzenie '{device_id}' nie jest w sesji")
 
     del session.devices[device_id]
+    await store.save(session_id)
     log.info("[%s] Urządzenie opuściło sesję: %s (%d pozostało)",
              session_id, device_id, len(session.devices))
 
@@ -228,10 +237,6 @@ async def leave_session(session_id: str, device_id: str):
         "device_id": device_id,
         "remaining": len(session.devices),
     })
-
-    if not session.devices:
-        await store.delete(session_id)
-        log.info("[%s] Sesja usunięta automatycznie (brak urządzeń)", session_id)
 
     return Response(status_code=204)
 
@@ -271,6 +276,7 @@ async def upload_calib_image(
     save_path.write_bytes(content)
 
     device.calib_frame_count += 1
+    await store.save(session_id)
 
     log.info("[%s] Kalibracja %s: klatka %d zapisana (%d B)",
              session_id, device_id, device.calib_frame_count - 1, len(content))
@@ -418,6 +424,7 @@ async def upload_capture_image(
     save_path.write_bytes(content)
 
     device.capture_frame_count += 1
+    await store.save(session_id)
 
     log.info("[%s] Zdjecie %s: capture %d (%d B)",
              session_id, device_id, device.capture_frame_count - 1, len(content))

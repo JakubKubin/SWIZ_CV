@@ -1,8 +1,8 @@
 numpy==2.4.4
 opencv-python==4.13.0.92
-pluggy==1.6.0
-Pygments==2.20.0
+python-dotenv>=1.0.0
 pytest==9.0.3
+scipy>=1.11
 
 # Backend FastAPI
 fastapi>=0.110.0

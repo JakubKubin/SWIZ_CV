@@ -312,8 +312,10 @@ def run_pipeline(
     # 2. Rektyfikacja - wyrownanie linii epipolarnych obu obrazow
     # ------------------------------------------------------------------
     log.info("--- Rektyfikacja ---")
-    img_size = (left_img.shape[1], left_img.shape[0])
-    left_rect, right_rect = rectify_pair(stereo, left_img, right_img, img_size)
+    # Nie wymuszamy rozmiaru wejscia - rectify_pair uzywa rozdzielczosci kalibracji
+    # (stereo.left.image_size) i w razie potrzeby sam dopasowuje obrazy, dzieki czemu
+    # macierz Q pozostaje poprawna. W trybie syntetycznym rozmiary i tak sie zgadzaja.
+    left_rect, right_rect = rectify_pair(stereo, left_img, right_img)
 
     cv2.imwrite(str(out / "left_rect.png"),  left_rect)
     cv2.imwrite(str(out / "right_rect.png"), right_rect)

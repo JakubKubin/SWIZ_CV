@@ -11,15 +11,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from pathlib import Path
 from typing import Any
 
 import cv2
-import numpy as np
 
-from calibration import calibrate_stereo, save_params, load_params
-from disparity import rectify_pair, compute_disparity, disparity_to_depth
+from calibration import calibrate_stereo, save_params, load_params, baseline_warning
+from disparity import rectify_pair, compute_disparity
 from pointcloud import build_pointcloud, filter_pointcloud, save_ply
 from pallet import detect_pallet
 from measurement import measure_object, validate_measurement, generate_report
@@ -112,10 +110,18 @@ def _sync_calibrate(session_id: str) -> CalibResult:
     params_path = str(session.data_dir / "stereo.json")
     save_params(stereo, params_path)
 
-    log.info("Kalibracja OK: reproj=%.4f px, params=%s", stereo.reproj_error, params_path)
+    warn = baseline_warning(stereo.T, stereo.reproj_error)
+    log.info("Kalibracja OK: stereo=%.4f px (L=%.4f, P=%.4f), params=%s",
+             stereo.reproj_error, stereo.left.reproj_error,
+             stereo.right.reproj_error, params_path)
+    if warn:
+        log.warning("[%s] Jakosc kalibracji: %s", session_id, warn)
     return CalibResult(
         reproj_error=float(stereo.reproj_error),
         params_path=params_path,
+        rms_left=float(stereo.left.reproj_error),
+        rms_right=float(stereo.right.reproj_error),
+        warning=warn,
     )
 
 
@@ -131,6 +137,9 @@ async def calibrate_session(session_id: str) -> None:
         await ws_manager.broadcast(session_id, {
             "event": "calibration_done",
             "reproj_error": result.reproj_error,
+            "rms_left": result.rms_left,
+            "rms_right": result.rms_right,
+            "warning": result.warning,
         })
         log.info("[%s] Kalibracja zakonczona: RMS=%.4f px", session_id, result.reproj_error)
 
@@ -186,21 +195,14 @@ def _sync_measure(session_id: str) -> MeasResult:
     if left_img is None or right_img is None:
         raise IOError(f"Nie mozna wczytac zdiec: {left_path}, {right_path}")
 
-    # Skaluj duze obrazy do max 1920px
-    h, w = left_img.shape[:2]
-    if w > 1920:
-        scale = 1920 / w
-        left_img  = cv2.resize(left_img,  (1920, int(h * scale)))
-        right_img = cv2.resize(right_img, (1920, int(right_img.shape[0] * scale)))
-
-    # Etap 2-4: rektyfikacja, dysparycja, glebokos
-    img_size = (left_img.shape[1], left_img.shape[0])
-    left_rect, right_rect = rectify_pair(stereo, left_img, right_img, img_size)
+    # Etap 2-4: rektyfikacja, dysparycja, glebokos.
+    # rectify_pair sam dopasowuje rozdzielczosc zdiec do rozmiaru kalibracji
+    # (stereo.left.image_size), wiec macierz Q pozostaje poprawna.
+    left_rect, right_rect = rectify_pair(stereo, left_img, right_img)
 
     disp = compute_disparity(left_rect, right_rect)
-    _    = disparity_to_depth(disp, stereo.Q, max_depth_mm=5000.0)
 
-    # Etap 5: chmura punktow
+    # Etap 5: chmura punktow (budowana wprost z dysparycji + Q)
     xyz, colors = build_pointcloud(disp, stereo.Q, left_rect, max_depth_mm=5000.0)
     xyz, colors = filter_pointcloud(xyz, colors)
 
@@ -222,6 +224,10 @@ def _sync_measure(session_id: str) -> MeasResult:
         width_mm=meas.bbox.width,
         length_mm=meas.bbox.length,
         height_mm=meas.bbox.height,
+        volume_voxel_mm3=meas.volume.voxel_mm3,
+        volume_bbox_mm3=meas.volume.bbox_mm3,
+        volume_hull_mm3=meas.volume.hull_mm3,
+        fill_ratio=meas.volume.fill_ratio,
         validation_passed=validation.passed,
         pallet_rms_mm=validation.pallet_plane_rms_mm,
         n_object_pts=meas.n_object_pts,
@@ -245,6 +251,7 @@ async def measure_session(session_id: str) -> None:
             "width_mm": result.width_mm,
             "length_mm": result.length_mm,
             "height_mm": result.height_mm,
+            "volume_voxel_l": result.volume_voxel_mm3 / 1e6,
             "validation_passed": result.validation_passed,
         })
 
@@ -282,6 +289,10 @@ def _sync_synthetic_measure() -> MeasResult:
         width_mm=meas.bbox.width,
         length_mm=meas.bbox.length,
         height_mm=meas.bbox.height,
+        volume_voxel_mm3=meas.volume.voxel_mm3,
+        volume_bbox_mm3=meas.volume.bbox_mm3,
+        volume_hull_mm3=meas.volume.hull_mm3,
+        fill_ratio=meas.volume.fill_ratio,
         validation_passed=validation.passed,
         pallet_rms_mm=validation.pallet_plane_rms_mm,
         n_object_pts=meas.n_object_pts,

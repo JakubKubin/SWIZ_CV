@@ -44,6 +44,12 @@ MAX_STEREO_REPROJ_ERROR: float = 2.0   # [px] prog akceptacji dla kalibracji ste
 # ---------------------------------------------------------------------------
 # Parametry detekcji naroznikow szachownicy
 # ---------------------------------------------------------------------------
+# Detekcja naroznikow na pelnej rozdzielczosci telefonow (3-4K) jest wolna bez
+# poprawy jakosci. Obrazy szersze niz ta wartosc sa tymczasowo zmniejszane
+# WYLACZNIE na czas detekcji - wykryte narozniki sa nastepnie przeskalowane
+# z powrotem do wspolrzednych oryginalu i dorefinowane subpikselowo. Dzieki
+# temu kalibracja zawsze odbywa sie w natywnej rozdzielczosci obrazow.
+CORNER_DETECT_MAX_WIDTH: int = int(os.environ.get("CORNER_DETECT_MAX_WIDTH", 1920))
 # Okno 11x11 px
 CORNER_SUBPIX_WIN: tuple[int, int] = (11, 11)
 # (-1, -1) oznacza brak strefy martwej wokol srodka okna

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../models/models.dart';
 import '../providers/app_state.dart';
 import 'session_screen.dart';
 
@@ -74,6 +75,42 @@ class _HomeScreenState extends State<HomeScreen> {
     if (ok && mounted) {
       Navigator.push(
           context, MaterialPageRoute(builder: (_) => const SessionScreen()));
+    }
+  }
+
+  Future<void> _resume(AppState s, SessionRef ref) async {
+    // resumeSession ustawia serverUrl na podstawie zapamiętanej sesji (ref),
+    // więc nie synchronizujemy tu adresu z pola tekstowego.
+    setState(() => _busy = true);
+    final ok = await s.resumeSession(ref);
+    setState(() => _busy = false);
+    if (ok && mounted) {
+      Navigator.push(
+          context, MaterialPageRoute(builder: (_) => const SessionScreen()));
+    }
+  }
+
+  Future<void> _deleteKnown(AppState s, SessionRef ref) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Usunąć sesję?'),
+        content: Text(
+          'Sesja ${ref.sessionId} oraz wszystkie jej dane (kalibracja, '
+          'zdjęcia, wyniki) zostaną trwale usunięte z serwera.',
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Anuluj')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Usuń')),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await s.deleteKnownSession(ref);
     }
   }
 
@@ -242,6 +279,24 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
+            if (state.knownSessions.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _Section(
+                title: 'Moje sesje',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (final ref in state.knownSessions)
+                      _KnownSessionTile(
+                        sref: ref,
+                        busy: _busy,
+                        onResume: () => _resume(state, ref),
+                        onDelete: () => _deleteKnown(state, ref),
+                      ),
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: 12),
             _Section(
               title: 'Diagnostyka',
@@ -299,6 +354,68 @@ class _Section extends StatelessWidget {
             child,
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _KnownSessionTile extends StatelessWidget {
+  final SessionRef sref;
+  final bool busy;
+  final VoidCallback onResume;
+  final VoidCallback onDelete;
+
+  const _KnownSessionTile({
+    required this.sref,
+    required this.busy,
+    required this.onResume,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final tt = Theme.of(context).textTheme;
+    final roleLabel = sref.isLeader ? 'Lider' : 'Follower';
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(
+            sref.isLeader
+                ? Icons.account_circle_outlined
+                : Icons.smartphone_outlined,
+            size: 20,
+            color: cs.onSurfaceVariant,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(sref.sessionId,
+                    style: tt.bodyMedium
+                        ?.copyWith(fontWeight: FontWeight.w600)),
+                Text('$roleLabel · ${sref.serverUrl}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style:
+                        tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+              ],
+            ),
+          ),
+          TextButton.icon(
+            onPressed: busy ? null : onResume,
+            icon: const Icon(Icons.play_arrow_outlined, size: 18),
+            label: const Text('Wróć'),
+          ),
+          IconButton(
+            tooltip: 'Usuń sesję',
+            icon: Icon(Icons.delete_outline, size: 20, color: cs.error),
+            onPressed: busy ? null : onDelete,
+          ),
+        ],
       ),
     );
   }

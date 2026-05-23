@@ -16,6 +16,7 @@ class AppState extends ChangeNotifier {
   static const _kServerUrl = 'server_url';
   static const _kDeviceId = 'device_id';
   static const _kMac = 'mac';
+  static const _kSessions = 'known_sessions';
 
   final SharedPreferences _prefs;
 
@@ -25,6 +26,7 @@ class AppState extends ChangeNotifier {
     mac = _prefs.getString(_kMac) ?? _generateMac();
     _prefs.setString(_kDeviceId, deviceId);
     _prefs.setString(_kMac, mac);
+    _loadKnownSessions();
   }
 
   // -------------------------------------------------------------------------
@@ -55,6 +57,20 @@ class AppState extends ChangeNotifier {
   String? sessionId;
   SessionData? session;
   MeasurementResult? measurement;
+
+  /// Lokalna historia sesji utworzonych/dołączonych z tego urządzenia.
+  /// Najnowsze na początku listy.
+  List<SessionRef> knownSessions = [];
+
+  /// To urządzenie w bieżącej sesji (lub null, jeśli nie figuruje w niej).
+  DeviceInfo? get myDevice {
+    final devices = session?.devices;
+    if (devices == null) return null;
+    for (final d in devices) {
+      if (d.deviceId == deviceId) return d;
+    }
+    return null;
+  }
 
   // -------------------------------------------------------------------------
   // Stan UI
@@ -129,6 +145,61 @@ class AppState extends ChangeNotifier {
   }
 
   // -------------------------------------------------------------------------
+  // Historia sesji (SharedPreferences)
+  // -------------------------------------------------------------------------
+
+  void _loadKnownSessions() {
+    final raw = _prefs.getString(_kSessions);
+    if (raw == null || raw.isEmpty) return;
+    try {
+      final list = jsonDecode(raw) as List;
+      knownSessions = list
+          .map((e) => SessionRef.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } catch (_) {
+      knownSessions = [];
+    }
+  }
+
+  void _persistKnownSessions() {
+    _prefs.setString(
+        _kSessions, jsonEncode(knownSessions.map((s) => s.toJson()).toList()));
+  }
+
+  /// Zapamiętuje sesję w historii (lub aktualizuje istniejący wpis).
+  void _rememberSession(String sid, bool leader) {
+    knownSessions.removeWhere((s) => s.sessionId == sid);
+    knownSessions.insert(
+      0,
+      SessionRef(
+        sessionId: sid,
+        serverUrl: serverUrl,
+        isLeader: leader,
+        createdAt: DateTime.now().millisecondsSinceEpoch / 1000.0,
+      ),
+    );
+    _persistKnownSessions();
+  }
+
+  void _forgetSession(String sid) {
+    knownSessions.removeWhere((s) => s.sessionId == sid);
+    _persistKnownSessions();
+  }
+
+  /// Czyści dane przejściowe przy przełączaniu między sesjami, żeby nie
+  /// pokazać nieaktualnych wyników/zdarzeń z poprzedniej sesji.
+  void _resetTransientState() {
+    measurement = null;
+    captureTriggerAt = null;
+    serverTimeOffset = 0.0;
+    wsConnected = false;
+    wsLog.clear();
+    pendingCalibImages.clear();
+    error = null;
+    info = null;
+  }
+
+  // -------------------------------------------------------------------------
   // Tworzenie i dołączanie do sesji
   // -------------------------------------------------------------------------
 
@@ -140,12 +211,14 @@ class AppState extends ChangeNotifier {
       deviceId = did;
       mac = m;
       isLeader = leader;
+      _resetTransientState();
 
       final sess = await _api.createSession();
       sessionId = sess.sessionId;
 
       final joined = await _api.joinSession(sess.sessionId, did, m, leader);
       session = joined;
+      _rememberSession(sess.sessionId, leader);
 
       _connectWs();
       _setLoading(false);
@@ -167,9 +240,11 @@ class AppState extends ChangeNotifier {
       mac = m;
       isLeader = leader;
       sessionId = sid;
+      _resetTransientState();
 
       final joined = await _api.joinSession(sid, did, m, leader);
       session = joined;
+      _rememberSession(sid, leader);
 
       _connectWs();
       _setLoading(false);
@@ -179,6 +254,65 @@ class AppState extends ChangeNotifier {
       _setError(e.toString());
       return false;
     }
+  }
+
+  /// Wraca do zapamiętanej sesji: weryfikuje że istnieje na serwerze,
+  /// w razie potrzeby ponownie rejestruje urządzenie, łączy WebSocket
+  /// i pobiera wynik pomiaru jeśli sesja jest zakończona.
+  Future<bool> resumeSession(SessionRef ref) async {
+    _setLoading(true);
+    try {
+      serverUrl = ref.serverUrl.isNotEmpty ? ref.serverUrl : serverUrl;
+      isLeader = ref.isLeader;
+      sessionId = ref.sessionId;
+      _resetTransientState();
+
+      var fetched = await _api.getSession(ref.sessionId);
+
+      // Jeśli to urządzenie nie figuruje już w sesji (np. wcześniej ją
+      // opuściło), dołączamy je ponownie tą samą rolą.
+      final stillMember = fetched.devices.any((d) => d.deviceId == deviceId);
+      if (!stillMember) {
+        fetched =
+            await _api.joinSession(ref.sessionId, deviceId, mac, ref.isLeader);
+      }
+
+      session = fetched;
+      _rememberSession(ref.sessionId, ref.isLeader);
+      _connectWs();
+
+      if (fetched.hasMeasurement || fetched.isDone) {
+        await _fetchMeasurement();
+      }
+
+      _setLoading(false);
+      return true;
+    } catch (e) {
+      sessionId = null;
+      session = null;
+      _setError('Nie można wrócić do sesji ${ref.sessionId}: $e');
+      return false;
+    }
+  }
+
+  /// Trwale usuwa sesję na serwerze (wraz z danymi) i z lokalnej historii.
+  Future<void> deleteKnownSession(SessionRef ref) async {
+    try {
+      await _api.deleteSession(ref.sessionId);
+    } catch (_) {
+      // Sesja mogła już nie istnieć na serwerze - i tak czyścimy lokalnie.
+    }
+    _forgetSession(ref.sessionId);
+    if (sessionId == ref.sessionId) {
+      _ws?.sink.close();
+      _wsSub?.cancel();
+      _ws = null;
+      _wsSub = null;
+      sessionId = null;
+      session = null;
+      _resetTransientState();
+    }
+    notifyListeners();
   }
 
   Future<void> refreshSession() async {
@@ -280,7 +414,9 @@ class AppState extends ChangeNotifier {
         final w = (msg['width_mm'] as num?)?.toStringAsFixed(0) ?? '?';
         final l = (msg['length_mm'] as num?)?.toStringAsFixed(0) ?? '?';
         final h = (msg['height_mm'] as num?)?.toStringAsFixed(0) ?? '?';
-        _setInfo('Pomiar zakończony: $w × $l × $h mm');
+        final vol = (msg['volume_voxel_l'] as num?)?.toStringAsFixed(2);
+        final volStr = vol == null ? '' : ', ~$vol l';
+        _setInfo('Pomiar zakończony: $w × $l × $h mm$volStr');
         refreshSession();
         _fetchMeasurement();
         break;
@@ -430,6 +566,8 @@ class AppState extends ChangeNotifier {
   // Rozłączenie / reset
   // -------------------------------------------------------------------------
 
+  /// Opuszcza bieżącą sesję (wypisuje urządzenie), ale POZOSTAWIA ją w
+  /// historii i na serwerze - można do niej później wrócić przez resumeSession().
   Future<void> leaveSession() async {
     _ws?.sink.close();
     _wsSub?.cancel();
@@ -438,20 +576,22 @@ class AppState extends ChangeNotifier {
 
     if (sessionId != null && deviceId.isNotEmpty) {
       try {
-        // Usuwa to urządzenie; backend sam usuwa sesję gdy zostaje pusta.
+        // Wypisuje to urządzenie. Backend zachowuje sesję i jej dane.
         await _api.leaveDevice(sessionId!, deviceId);
       } catch (_) {}
     }
 
     sessionId = null;
     session = null;
-    measurement = null;
-    captureTriggerAt = null;
-    wsConnected = false;
-    serverTimeOffset = 0.0;
-    wsLog.clear();
-    pendingCalibImages.clear();
+    _resetTransientState();
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _ws?.sink.close();
+    _wsSub?.cancel();
+    super.dispose();
   }
 
   // -------------------------------------------------------------------------

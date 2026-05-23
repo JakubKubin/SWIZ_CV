@@ -175,6 +175,24 @@ def _make_projectpoints_stereo_data(
     return cal.StereoCalibrationData(obj_pts, left_pts, right_pts, img_size)
 
 
+def _make_highres_board_image() -> np.ndarray:
+    """Plansza w wysokiej rozdzielczosci (szerokosc > CORNER_DETECT_MAX_WIDTH).
+
+    Sluzy do testow scale-back: detekcja odbywa sie na zmniejszonej kopii, ale
+    narozniki musza wrocic do wspolrzednych natywnych. Lekka rotacja symuluje
+    realne warunki (jak w generatorze warpAffine).
+    """
+    flat = _make_flat_checkerboard(cal.BOARD_ROWS, cal.BOARD_COLS, sq_px=200)
+    h, w = flat.shape[:2]
+    canvas_w = max(w, cal.config.CORNER_DETECT_MAX_WIDTH + 400)
+    canvas_h = int(round(canvas_w * h / w))
+    M = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), 8, 1.0)
+    M[0, 2] += (canvas_w - w) / 2.0
+    M[1, 2] += (canvas_h - h) / 2.0
+    return cv2.warpAffine(flat, M, (canvas_w, canvas_h),
+                          flags=cv2.INTER_LINEAR, borderValue=(180, 180, 180))
+
+
 def _save_visual(img: np.ndarray, subdir: str, name: str, visualize: bool) -> None:
     """Zapisuje obraz do test_output/<subdir>/<name>.png jesli --visualize jest aktywne."""
     if not visualize:
@@ -539,6 +557,89 @@ class TestCollectPoints:
         # .left i .right wskazuja na te same obj_points - brak kopii
         assert sd.left.obj_points is sd.obj_points
         assert sd.right.obj_points is sd.obj_points
+
+
+class TestResolutionConsistency:
+    """Regresja dla obrazow > CORNER_DETECT_MAX_WIDTH (telefony 2560+ px).
+
+    Cala dotychczasowa suita uzywa 640x480, wiec sciezka zmniejszania obrazu nigdy
+    nie byla testowana - co ukrywalo blad: narozniki zwracane w skali zmniejszonej
+    przy image_size w skali natywnej (zla macierz K).
+    """
+
+    def test_find_corners_returns_native_coords(self):
+        """Detekcja na zmniejszonej kopii, ale narozniki w skali ORYGINALU.
+
+        Porownanie detekcji bez zmniejszania (prog ustawiony bardzo wysoko) z
+        detekcja przez zmniejszenie + scale-back. Wyniki musza byc niemal identyczne.
+        """
+        img = _make_highres_board_image()
+        assert img.shape[1] > cal.config.CORNER_DETECT_MAX_WIDTH
+
+        orig_max_width = cal.config.CORNER_DETECT_MAX_WIDTH
+        try:
+            cal.config.CORNER_DETECT_MAX_WIDTH = 100_000  # bez zmniejszania
+            c_native = cal.find_corners(img)
+            cal.config.CORNER_DETECT_MAX_WIDTH = 1920      # ze zmniejszaniem + scale-back
+            c_scaled = cal.find_corners(img)
+        finally:
+            cal.config.CORNER_DETECT_MAX_WIDTH = orig_max_width
+
+        assert c_native is not None, "Detekcja natywna nieudana"
+        assert c_scaled is not None, "Detekcja ze scale-back nieudana"
+        assert c_native.shape == c_scaled.shape == (cal.BOARD_ROWS * cal.BOARD_COLS, 1, 2)
+        # Scale-back + cornerSubPix na pelnej rozdzielczosci -> niemal identyczne wyniki
+        assert np.max(np.abs(c_native - c_scaled)) < 3.0
+        # Dowod skali natywnej: narozniki siegaja daleko poza prog zmniejszania nie bylby
+        # mozliwy, gdyby zwracano wspolrzedne kopii 1920 px
+        assert c_scaled[:, 0, 0].max() > 1000
+
+    def test_collect_points_uses_native_image_size(self, tmp_path):
+        """collect_points: image_size == natywne, a narozniki sa w tej samej skali."""
+        img = _make_highres_board_image()
+        for i in range(cal.config.MIN_CALIBRATION_IMAGES):
+            cv2.imwrite(str(tmp_path / f"frame_{i:03d}.png"), img)
+
+        data = cal.collect_points(cal.get_image_paths(str(tmp_path)))
+        assert data.image_size == (img.shape[1], img.shape[0])
+        assert data.image_size[0] > cal.config.CORNER_DETECT_MAX_WIDTH
+        # Narozniki w skali natywnej (nie przyciete do szerokosci kopii roboczej)
+        assert data.img_points[0][:, 0, 0].max() > cal.config.CORNER_DETECT_MAX_WIDTH * 0.4
+
+    def test_rectify_pair_resizes_mismatched_input(self, synth_stereo_dirs):
+        """rectify_pair dopasowuje rozdzielczosc wejscia do rozmiaru kalibracji.
+
+        Bez tego macierz Q nie pasuje do obrazow pomiarowych o innej rozdzielczosci -
+        problem 'recznej korekty Q' z sesji c6383b0e.
+        """
+        from disparity import rectify_pair
+        ldir, rdir, _, _, _ = synth_stereo_dirs
+        sp = cal.calibrate_stereo(cal.get_image_paths(ldir), cal.get_image_paths(rdir))
+        assert sp.left.image_size == (IMG_W, IMG_H)
+
+        # Obrazy pomiarowe w 2x wiekszej rozdzielczosci niz kalibracja
+        big_l = np.zeros((IMG_H * 2, IMG_W * 2, 3), dtype=np.uint8)
+        big_r = np.zeros((IMG_H * 2, IMG_W * 2, 3), dtype=np.uint8)
+        lr, rr = rectify_pair(sp, big_l, big_r)
+        assert (lr.shape[1], lr.shape[0]) == (IMG_W, IMG_H)
+        assert (rr.shape[1], rr.shape[0]) == (IMG_W, IMG_H)
+
+
+class TestBaselineWarning:
+    def test_horizontal_baseline_no_warning(self):
+        T = np.array([[150.0], [1.0], [2.0]])
+        assert cal.baseline_warning(T, rms=0.4) is None
+
+    def test_nonhorizontal_baseline_warns(self):
+        # Wektor jak w sesji c6383b0e: duza skladowa Z -> baza nie-pozioma
+        T = np.array([[68.0], [21.0], [148.0]])
+        warn = cal.baseline_warning(T, rms=0.4)
+        assert warn is not None and "pozioma" in warn
+
+    def test_high_rms_warns(self):
+        T = np.array([[150.0], [0.0], [0.0]])
+        warn = cal.baseline_warning(T, rms=cal.config.MAX_STEREO_REPROJ_ERROR + 1.0)
+        assert warn is not None and "RMS" in warn
 
 
 if __name__ == "__main__":

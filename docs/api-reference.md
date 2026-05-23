@@ -61,14 +61,14 @@ Rejestruje urządzenie w sesji.
 ---
 
 ### `DELETE /sessions/{session_id}`
-Usuwa sesję i wszystkie dane na dysku.
+Trwale usuwa sesję i wszystkie dane na dysku (kalibracja, zdjęcia, wyniki). Jedyny sposób usunięcia danych sesji.
 
 **Response:** `204 No Content`
 
 ---
 
 ### `DELETE /sessions/{session_id}/devices/{device_id}`
-Usuwa urządzenie z sesji. Jeśli nie zostało żadne urządzenie, sesja jest automatycznie usuwana.
+Wypisuje urządzenie z sesji. Sesja oraz jej dane **nie są usuwane** — pozostają zapisane na dysku (`session.json`), więc urządzenie może później wrócić do sesji i ponownie dołączyć. Trwałe usunięcie: `DELETE /sessions/{id}`.
 
 **Response:** `204 No Content`
 
