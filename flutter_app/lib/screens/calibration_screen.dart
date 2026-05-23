@@ -345,41 +345,63 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
                     const SizedBox(height: 12),
                     if (session != null)
                       ...session.devices.map(
-                        (d) => Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Container(
-                                  width: 6,
-                                  height: 6,
-                                  decoration: BoxDecoration(
-                                    color: d.isLeader
-                                        ? AppColors.stateReady
-                                        : cs.onSurfaceVariant,
-                                    shape: BoxShape.circle,
+                        (d) => d.isCamera
+                            ? Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Container(
+                                        width: 6,
+                                        height: 6,
+                                        decoration: BoxDecoration(
+                                          color: d.isLeader
+                                              ? AppColors.stateReady
+                                              : cs.onSurfaceVariant,
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Text(d.deviceId, style: tt.bodySmall),
+                                      const Spacer(),
+                                      Text('${d.calibFrameCount} klatek',
+                                          style: tt.bodySmall?.copyWith(
+                                              color: cs.onSurfaceVariant)),
+                                    ],
                                   ),
+                                  const SizedBox(height: 6),
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(4),
+                                    child: LinearProgressIndicator(
+                                      value: (d.calibFrameCount / 10.0)
+                                          .clamp(0.0, 1.0),
+                                      minHeight: 6,
+                                      backgroundColor:
+                                          cs.surfaceContainerHighest,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 10),
+                                ],
+                              )
+                            : Padding(
+                                padding:
+                                    const EdgeInsets.only(bottom: 10),
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.computer,
+                                        size: 14,
+                                        color: cs.onSurfaceVariant),
+                                    const SizedBox(width: 8),
+                                    Text(d.deviceId,
+                                        style: tt.bodySmall?.copyWith(
+                                            color: cs.onSurfaceVariant)),
+                                    const Spacer(),
+                                    Text('admin',
+                                        style: tt.bodySmall?.copyWith(
+                                            color: cs.onSurfaceVariant)),
+                                  ],
                                 ),
-                                const SizedBox(width: 8),
-                                Text(d.deviceId, style: tt.bodySmall),
-                                const Spacer(),
-                                Text('${d.calibFrameCount} klatek',
-                                    style: tt.bodySmall
-                                        ?.copyWith(color: cs.onSurfaceVariant)),
-                              ],
-                            ),
-                            const SizedBox(height: 6),
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(4),
-                              child: LinearProgressIndicator(
-                                value: (d.calibFrameCount / 10.0).clamp(0.0, 1.0),
-                                minHeight: 6,
-                                backgroundColor: cs.surfaceContainerHighest,
                               ),
-                            ),
-                            const SizedBox(height: 10),
-                          ],
-                        ),
                       ),
                     Text(
                       'Minimum klatek (wszystkie urządzenia): $minFrames',

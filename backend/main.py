@@ -192,8 +192,9 @@ async def join_session(session_id: str, body: JoinRequest):
         is_camera=body.is_camera,
     )
     session.devices[body.device_id] = device
-    session.calib_dir(body.device_id).mkdir(parents=True, exist_ok=True)
-    session.capture_dir(body.device_id).mkdir(parents=True, exist_ok=True)
+    if body.is_camera:
+        session.calib_dir(body.device_id).mkdir(parents=True, exist_ok=True)
+        session.capture_dir(body.device_id).mkdir(parents=True, exist_ok=True)
     await store.save(session_id)
 
     log.info("[%s] Dołączyło urządzenie: %s (leader=%s)", session_id, body.device_id, body.is_leader)

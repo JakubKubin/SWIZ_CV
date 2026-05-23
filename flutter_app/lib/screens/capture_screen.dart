@@ -226,27 +226,45 @@ class _CaptureScreenState extends State<CaptureScreen> {
                       ...session.devices.map(
                         (d) => Padding(
                           padding: const EdgeInsets.symmetric(vertical: 4),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 6,
-                                height: 6,
-                                decoration: BoxDecoration(
-                                  color: d.captureFrameCount > 0
-                                      ? AppColors.success
-                                      : cs.outline,
-                                  shape: BoxShape.circle,
+                          child: d.isCamera
+                              ? Row(
+                                  children: [
+                                    Container(
+                                      width: 6,
+                                      height: 6,
+                                      decoration: BoxDecoration(
+                                        color: d.captureFrameCount > 0
+                                            ? AppColors.success
+                                            : cs.outline,
+                                        shape: BoxShape.circle,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(d.deviceId,
+                                          style: tt.bodySmall),
+                                    ),
+                                    Text('${d.captureFrameCount} zdjęć',
+                                        style: tt.bodySmall?.copyWith(
+                                            color: cs.onSurfaceVariant)),
+                                  ],
+                                )
+                              : Row(
+                                  children: [
+                                    Icon(Icons.computer,
+                                        size: 14,
+                                        color: cs.onSurfaceVariant),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(d.deviceId,
+                                          style: tt.bodySmall?.copyWith(
+                                              color: cs.onSurfaceVariant)),
+                                    ),
+                                    Text('admin',
+                                        style: tt.bodySmall?.copyWith(
+                                            color: cs.onSurfaceVariant)),
+                                  ],
                                 ),
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Text(d.deviceId, style: tt.bodySmall),
-                              ),
-                              Text('${d.captureFrameCount} zdjęć',
-                                  style: tt.bodySmall
-                                      ?.copyWith(color: cs.onSurfaceVariant)),
-                            ],
-                          ),
                         ),
                       ),
                     ],
