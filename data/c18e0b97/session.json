@@ -1,0 +1,18 @@
+{
+  "session_id": "c18e0b97",
+  "state": "IDLE",
+  "created_at": 1779540917.4591959,
+  "devices": {
+    "device_5857": {
+      "device_id": "device_5857",
+      "mac": "72:11:19:98:06:E7",
+      "is_leader": true,
+      "joined_at": 1779540917.6897297,
+      "ws_connected": false,
+      "calib_frame_count": 0,
+      "capture_frame_count": 0
+    }
+  },
+  "calib_result": null,
+  "meas_result": null
+}

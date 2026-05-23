@@ -6,7 +6,7 @@ services:
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
-      - session_data:/app/data
+      - ./data:/app/data
     env_file:
       - .env
     restart: unless-stopped
@@ -17,5 +17,3 @@ services:
       retries: 3
       start_period: 10s
 
-volumes:
-  session_data:

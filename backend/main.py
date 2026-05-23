@@ -563,11 +563,14 @@ async def websocket_endpoint(ws: WebSocket, session_id: str, device_id: str):
         → broadcast: {"event": "device_captured", "device_id": "...", "at": ...}
 
     Serwer → klienci (broadcast):
-      {"event": "device_joined",       "device_id": ..., "is_leader": ...}
-      {"event": "calibration_done",    "reproj_error": ...}
-      {"event": "capture_trigger",     "at": ...}
-      {"event": "measurement_done",    "width_mm": ..., "length_mm": ..., "height_mm": ..., "validation_passed": ...}
-      {"event": "error",               "message": "..."}
+      {"event": "session_state",        <pelny SessionOut> }   ← tylko do laczacego urzadzenia
+      {"event": "device_ws_connected",  "device_id": ...}
+      {"event": "device_ws_disconnected","device_id": ...}
+      {"event": "device_joined",        "device_id": ..., "is_leader": ...}
+      {"event": "calibration_done",     "reproj_error": ...}
+      {"event": "capture_trigger",      "at": ...}
+      {"event": "measurement_done",     "width_mm": ..., "length_mm": ..., "height_mm": ..., "validation_passed": ...}
+      {"event": "error",                "message": "..."}
     """
     # Walidacja sesji przed akceptacją polaczenia
     try:
@@ -583,6 +586,15 @@ async def websocket_endpoint(ws: WebSocket, session_id: str, device_id: str):
     await ws_manager.connect(ws, session_id, device_id)
     session.devices[device_id].ws_connected = True
     log.info("[%s] WS połączono: %s", session_id, device_id)
+
+    # Push current session state to this device so it catches up on any missed events
+    await ws.send_json({"event": "session_state", **_session_to_out(session).model_dump()})
+
+    # Tell all other devices that this device's WS is now live
+    await ws_manager.broadcast(session_id, {
+        "event": "device_ws_connected",
+        "device_id": device_id,
+    })
 
     try:
         while True:
@@ -613,3 +625,9 @@ async def websocket_endpoint(ws: WebSocket, session_id: str, device_id: str):
         if device_id in session.devices:
             session.devices[device_id].ws_connected = False
         log.info("[%s] WS rozłączono: %s", session_id, device_id)
+
+        # Notify remaining devices that this device's WS dropped
+        await ws_manager.broadcast(session_id, {
+            "event": "device_ws_disconnected",
+            "device_id": device_id,
+        })

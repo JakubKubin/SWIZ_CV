@@ -19,6 +19,18 @@ class ApiService {
   // Pomocnicy
   // -------------------------------------------------------------------------
 
+  /// Nagłówki bazowe dla każdego żądania.
+  /// ngrok-skip-browser-warning pomija stronę ostrzeżenia ngrok free tier
+  /// (wymagane przy publicznym tunelu ngrok; nieszkodliwe dla innych URL-i).
+  static const Map<String, String> _baseHeaders = {
+    'ngrok-skip-browser-warning': 'true',
+  };
+
+  static Map<String, String> _jsonHeaders() => {
+        ..._baseHeaders,
+        'Content-Type': 'application/json',
+      };
+
   Future<void> _checkStatus(http.Response r) async {
     if (r.statusCode >= 400) {
       String detail;
@@ -54,7 +66,7 @@ class ApiService {
   Future<bool> healthCheck() async {
     try {
       final r = await http
-          .get(_uri('/health'))
+          .get(_uri('/health'), headers: _baseHeaders)
           .timeout(const Duration(seconds: 5));
       if (r.statusCode != 200) {
         _log.warn('Health check zwrócił HTTP ${r.statusCode} ($baseUrl)');
@@ -71,8 +83,7 @@ class ApiService {
   // -------------------------------------------------------------------------
 
   Future<SessionData> createSession() async {
-    final r = await http.post(_uri('/sessions'),
-        headers: {'Content-Type': 'application/json'});
+    final r = await http.post(_uri('/sessions'), headers: _jsonHeaders());
     await _checkStatus(r);
     return SessionData.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
   }
@@ -85,7 +96,7 @@ class ApiService {
   ) async {
     final r = await http.post(
       _uri('/sessions/$sid/join'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _jsonHeaders(),
       body: jsonEncode({'device_id': deviceId, 'mac': mac, 'is_leader': isLeader}),
     );
     await _checkStatus(r);
@@ -93,25 +104,28 @@ class ApiService {
   }
 
   Future<SessionData> getSession(String sid) async {
-    final r = await http.get(_uri('/sessions/$sid'));
+    final r = await http.get(_uri('/sessions/$sid'), headers: _baseHeaders);
     await _checkStatus(r);
     return SessionData.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
   }
 
   Future<void> deleteSession(String sid) async {
-    final r = await http.delete(_uri('/sessions/$sid'));
+    final r = await http.delete(_uri('/sessions/$sid'), headers: _baseHeaders);
     if (r.statusCode != 204 && r.statusCode != 404) await _checkStatus(r);
   }
 
   /// Usuwa jedno urządzenie z sesji. Backend automatycznie usuwa sesję
   /// gdy nie zostanie żadne urządzenie.
   Future<void> leaveDevice(String sid, String deviceId) async {
-    final r = await http.delete(_uri('/sessions/$sid/devices/$deviceId'));
+    final r = await http.delete(
+      _uri('/sessions/$sid/devices/$deviceId'),
+      headers: _baseHeaders,
+    );
     if (r.statusCode != 204 && r.statusCode != 404) await _checkStatus(r);
   }
 
   Future<List<SessionData>> listSessions() async {
-    final r = await http.get(_uri('/sessions'));
+    final r = await http.get(_uri('/sessions'), headers: _baseHeaders);
     await _checkStatus(r);
     return (jsonDecode(r.body) as List)
         .map((j) => SessionData.fromJson(j as Map<String, dynamic>))
@@ -129,6 +143,7 @@ class ApiService {
   ) async {
     final url = _uri('/sessions/$sid/calibration/images');
     final req = http.MultipartRequest('POST', url);
+    req.headers.addAll(_baseHeaders);
     req.fields['device_id'] = deviceId;
     req.files.add(http.MultipartFile.fromBytes('file', bytes, filename: 'frame.jpg'));
 
@@ -141,12 +156,18 @@ class ApiService {
   }
 
   Future<void> computeCalibration(String sid) async {
-    final r = await http.post(_uri('/sessions/$sid/calibration/compute'));
+    final r = await http.post(
+      _uri('/sessions/$sid/calibration/compute'),
+      headers: _baseHeaders,
+    );
     await _checkStatus(r);
   }
 
   Future<Map<String, dynamic>> getCalibrationStatus(String sid) async {
-    final r = await http.get(_uri('/sessions/$sid/calibration'));
+    final r = await http.get(
+      _uri('/sessions/$sid/calibration'),
+      headers: _baseHeaders,
+    );
     await _checkStatus(r);
     return jsonDecode(r.body) as Map<String, dynamic>;
   }
@@ -158,7 +179,7 @@ class ApiService {
   Future<Map<String, dynamic>> triggerCapture(String sid, int delayMs) async {
     final r = await http.post(
       _uri('/sessions/$sid/capture/trigger'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _jsonHeaders(),
       body: jsonEncode({'delay_ms': delayMs}),
     );
     await _checkStatus(r);
@@ -172,6 +193,7 @@ class ApiService {
   ) async {
     final url = _uri('/sessions/$sid/capture/images');
     final req = http.MultipartRequest('POST', url);
+    req.headers.addAll(_baseHeaders);
     req.fields['device_id'] = deviceId;
     req.files.add(http.MultipartFile.fromBytes('file', bytes, filename: 'capture.jpg'));
 
@@ -188,25 +210,34 @@ class ApiService {
   // -------------------------------------------------------------------------
 
   Future<void> runMeasurement(String sid) async {
-    final r = await http.post(_uri('/sessions/$sid/measure'));
+    final r = await http.post(
+      _uri('/sessions/$sid/measure'),
+      headers: _baseHeaders,
+    );
     await _checkStatus(r);
   }
 
   Future<MeasurementResult> getMeasurement(String sid) async {
-    final r = await http.get(_uri('/sessions/$sid/measurement'));
+    final r = await http.get(
+      _uri('/sessions/$sid/measurement'),
+      headers: _baseHeaders,
+    );
     await _checkStatus(r);
     return MeasurementResult.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
   }
 
   Future<String> getMeasurementReport(String sid) async {
-    final r = await http.get(_uri('/sessions/$sid/measurement/report'));
+    final r = await http.get(
+      _uri('/sessions/$sid/measurement/report'),
+      headers: _baseHeaders,
+    );
     await _checkStatus(r);
     return r.body;
   }
 
   Future<MeasurementResult> syntheticMeasure() async {
     final r = await http
-        .post(_uri('/measure/synthetic'))
+        .post(_uri('/measure/synthetic'), headers: _baseHeaders)
         .timeout(const Duration(seconds: 30));
     await _checkStatus(r);
     return MeasurementResult.fromJson(jsonDecode(r.body) as Map<String, dynamic>);

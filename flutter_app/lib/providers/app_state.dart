@@ -386,6 +386,14 @@ class AppState extends ChangeNotifier {
               'powód=${_ws?.closeReason}');
           _setInfo('WebSocket rozłączony');
           notifyListeners();
+          if (sessionId != null) {
+            Future.delayed(const Duration(seconds: 3), () {
+              if (sessionId != null && !wsConnected) {
+                _log.info('Auto-reconnect WebSocket...');
+                _connectWs();
+              }
+            });
+          }
         },
       );
 
@@ -422,6 +430,35 @@ class AppState extends ChangeNotifier {
         wsConnected = true;
         _log.info('WS połączony, offset czasu serwera = '
             '${serverTimeOffset.toStringAsFixed(3)} s');
+        break;
+
+      case 'session_state':
+        // Backend pushes current state on WS connect — apply directly, no extra HTTP call
+        final rawDevices = msg['devices'] as List?;
+        if (session != null && rawDevices != null) {
+          session = SessionData(
+            sessionId: session!.sessionId,
+            state: msg['state'] as String? ?? session!.state,
+            devices: rawDevices
+                .map((d) => DeviceInfo.fromJson(d as Map<String, dynamic>))
+                .toList(),
+            createdAt: session!.createdAt,
+            hasCalibration: msg['has_calibration'] as bool? ?? session!.hasCalibration,
+            hasMeasurement: msg['has_measurement'] as bool? ?? session!.hasMeasurement,
+          );
+        } else {
+          refreshSession();
+        }
+        break;
+
+      case 'device_ws_connected':
+        _setInfo('Urządzenie ${msg['device_id']} połączyło WebSocket');
+        refreshSession();
+        break;
+
+      case 'device_ws_disconnected':
+        _setInfo('Urządzenie ${msg['device_id']} rozłączyło WebSocket');
+        refreshSession();
         break;
 
       case 'device_joined':

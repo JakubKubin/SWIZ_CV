@@ -16,7 +16,8 @@
       "Bash(find *)",
       "Bash(curl *)",
       "Bash(whoami)",
-      "Bash(python -m pyright disparity.py)"
+      "Bash(python -m pyright disparity.py)",
+      "Bash(docker exec *)"
     ]
   }
 }
