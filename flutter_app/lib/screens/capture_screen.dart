@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -26,6 +27,9 @@ class _CaptureScreenState extends State<CaptureScreen> {
   Timer? _countdownTimer;
   int _remainingMs = 0;
 
+  CameraController? _camController;
+  bool _camReady = false;
+
   @override
   void initState() {
     super.initState();
@@ -38,7 +42,38 @@ class _CaptureScreenState extends State<CaptureScreen> {
   void dispose() {
     _appState.removeListener(_onStateChange);
     _countdownTimer?.cancel();
+    _camController?.dispose();
     super.dispose();
+  }
+
+  Future<void> _initCamera() async {
+    try {
+      final cameras = await availableCameras();
+      if (cameras.isEmpty || !mounted) return;
+      final back = cameras.firstWhere(
+        (c) => c.lensDirection == CameraLensDirection.back,
+        orElse: () => cameras.first,
+      );
+      final ctrl = CameraController(back, ResolutionPreset.high, enableAudio: false);
+      await ctrl.initialize();
+      if (!mounted) {
+        await ctrl.dispose();
+        return;
+      }
+      setState(() {
+        _camController = ctrl;
+        _camReady = true;
+      });
+    } catch (e, st) {
+      _log.warn('Nie udało się zainicjować kamery', e, st);
+    }
+  }
+
+  Future<void> _disposeCamera() async {
+    final ctrl = _camController;
+    _camController = null;
+    _camReady = false;
+    await ctrl?.dispose();
   }
 
   void _onStateChange() {
@@ -78,6 +113,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
     }
 
     setState(() => _remainingMs = remainingMs());
+    if (!kIsWeb) _initCamera();
     _countdownTimer = Timer.periodic(const Duration(milliseconds: 50), (t) {
       if (!mounted) {
         t.cancel();
@@ -101,11 +137,13 @@ class _CaptureScreenState extends State<CaptureScreen> {
   Future<void> _captureAndUpload() async {
     XFile? xfile;
     try {
-      if (kIsWeb) {
-        xfile = await _picker.pickImage(source: ImageSource.gallery);
+      if (!kIsWeb && _camReady && _camController != null) {
+        xfile = await _camController!.takePicture();
+        _log.info('Automatyczne zdjęcie pomiarowe wykonane');
       } else {
+        _log.warn('Kamera nie gotowa — fallback na image_picker');
         xfile = await _picker.pickImage(
-          source: ImageSource.camera,
+          source: kIsWeb ? ImageSource.gallery : ImageSource.camera,
           imageQuality: 90,
         );
       }
@@ -117,6 +155,8 @@ class _CaptureScreenState extends State<CaptureScreen> {
         );
       }
       return;
+    } finally {
+      await _disposeCamera();
     }
     if (xfile == null) {
       _log.info('Przechwytywanie anulowane przez użytkownika (brak pliku)');

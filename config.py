@@ -60,6 +60,12 @@ CORNER_SUBPIX_ZERO_ZONE: tuple[int, int] = (-1, -1)
 TERM_CRITERIA = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
 
 # ---------------------------------------------------------------------------
+# Pipeline pomiarowy
+# ---------------------------------------------------------------------------
+MAX_DEPTH_MM: float = float(os.environ.get("MAX_DEPTH_MM", 5000.0))
+NOISE_FLOOR_MM: float = float(os.environ.get("NOISE_FLOOR_MM", 20.0))
+
+# ---------------------------------------------------------------------------
 # Obsługiwane formaty obrazow (kolejnosc wyszukiwania)
 # ---------------------------------------------------------------------------
 IMAGE_EXTENSIONS: list[str] = ["*.png", "*.jpg", "*.jpeg", "*.bmp"]

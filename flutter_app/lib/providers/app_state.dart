@@ -94,6 +94,9 @@ class AppState extends ChangeNotifier {
   /// Offset: czas serwera − czas lokalny (sekundy). Do synchronizacji przechwycenia.
   double serverTimeOffset = 0.0;
 
+  /// Czas lokalny wysłania ostatniego pinga (Unix sek.) — do korekty RTT.
+  double _pingSentAt = 0.0;
+
   /// true gdy WebSocket jest aktywny i odebrał co najmniej jeden pong.
   bool wsConnected = false;
 
@@ -415,6 +418,7 @@ class AppState extends ChangeNotifier {
       // Ping startowy - pomiar offsetu czasu serwera
       Future.delayed(const Duration(milliseconds: 400), () {
         try {
+          _pingSentAt = DateTime.now().millisecondsSinceEpoch / 1000.0;
           _ws?.sink.add(jsonEncode({'action': 'ping'}));
         } catch (e, st) {
           _log.warn('Nie udało się wysłać pinga startowego WS', e, st);
@@ -444,10 +448,13 @@ class AppState extends ChangeNotifier {
 
       case 'pong':
         final st = (msg['t'] as num?)?.toDouble() ?? 0.0;
-        serverTimeOffset = st - DateTime.now().millisecondsSinceEpoch / 1000.0;
+        final now = DateTime.now().millisecondsSinceEpoch / 1000.0;
+        final rtt = _pingSentAt > 0 ? now - _pingSentAt : 0.0;
+        serverTimeOffset = st - now + rtt / 2;
         wsConnected = true;
         _log.info('WS połączony, offset czasu serwera = '
-            '${serverTimeOffset.toStringAsFixed(3)} s');
+            '${serverTimeOffset.toStringAsFixed(3)} s, RTT = '
+            '${(rtt * 1000).toStringAsFixed(0)} ms');
         break;
 
       case 'session_state':
