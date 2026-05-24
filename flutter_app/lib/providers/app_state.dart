@@ -109,6 +109,26 @@ class AppState extends ChangeNotifier {
   /// Log ostatnich 30 zdarzeń WebSocket (do widoku debugowania).
   final List<Map<String, dynamic>> wsLog = [];
 
+  Timer? _infoClearTimer;
+
+  /// Navigation callbacks registered by SessionScreen so AppState can push
+  /// screens without importing them (avoids circular deps).
+  VoidCallback? _navigateToCalib;
+  VoidCallback? _navigateToCapture;
+
+  void registerNavigation({
+    required VoidCallback toCalib,
+    required VoidCallback toCapture,
+  }) {
+    _navigateToCalib = toCalib;
+    _navigateToCapture = toCapture;
+  }
+
+  void unregisterNavigation() {
+    _navigateToCalib = null;
+    _navigateToCapture = null;
+  }
+
   // -------------------------------------------------------------------------
   // Pomocnicy
   // -------------------------------------------------------------------------
@@ -129,7 +149,12 @@ class AppState extends ChangeNotifier {
 
   void _setInfo(String msg) {
     _log.info(msg);
+    _infoClearTimer?.cancel();
     info = msg;
+    _infoClearTimer = Timer(const Duration(seconds: 5), () {
+      info = null;
+      notifyListeners();
+    });
     notifyListeners();
   }
 
@@ -139,6 +164,7 @@ class AppState extends ChangeNotifier {
   }
 
   void clearInfo() {
+    _infoClearTimer?.cancel();
     info = null;
     notifyListeners();
   }
@@ -208,6 +234,7 @@ class AppState extends ChangeNotifier {
   /// Czyści dane przejściowe przy przełączaniu między sesjami, żeby nie
   /// pokazać nieaktualnych wyników/zdarzeń z poprzedniej sesji.
   void _resetTransientState() {
+    _infoClearTimer?.cancel();
     measurement = null;
     captureTriggerAt = null;
     calibTriggerAt = null;
@@ -396,12 +423,14 @@ class AppState extends ChangeNotifier {
         onError: (Object e, StackTrace st) {
           wsConnected = false;
           _log.error('Błąd strumienia WebSocket ($wsUrl)', e, st);
-          _setError('WebSocket: $e');
+          // onDone fires immediately after — let it show a single notification.
         },
         onDone: () {
           wsConnected = false;
           _log.warn('WebSocket rozłączony ($wsUrl), kod=${_ws?.closeCode}, '
               'powód=${_ws?.closeReason}');
+          // Clear any concurrent error so only one banner shows.
+          error = null;
           _setInfo('WebSocket rozłączony');
           notifyListeners();
           if (sessionId != null) {
@@ -451,6 +480,12 @@ class AppState extends ChangeNotifier {
         final now = DateTime.now().millisecondsSinceEpoch / 1000.0;
         final rtt = _pingSentAt > 0 ? now - _pingSentAt : 0.0;
         serverTimeOffset = st - now + rtt / 2;
+        if (!wsConnected) {
+          // Just (re)connected — clear any stale disconnect notification.
+          _infoClearTimer?.cancel();
+          error = null;
+          info = null;
+        }
         wsConnected = true;
         _log.info('WS połączony, offset czasu serwera = '
             '${serverTimeOffset.toStringAsFixed(3)} s, RTT = '
@@ -496,6 +531,18 @@ class AppState extends ChangeNotifier {
         refreshSession();
         break;
 
+      case 'leader_changed':
+        final newLeader = msg['new_leader'] as String?;
+        if (newLeader == deviceId) isLeader = true;
+        _setInfo('Lider sesji: $newLeader');
+        refreshSession();
+        break;
+
+      case 'device_updated':
+        _setInfo('Urządzenie ${msg['device_id']} zaktualizowane');
+        refreshSession();
+        break;
+
       case 'calibration_done':
         final err = (msg['reproj_error'] as num?)?.toStringAsFixed(3) ?? '?';
         _setInfo('Kalibracja zakończona - błąd reprojekcji: $err px');
@@ -504,11 +551,13 @@ class AppState extends ChangeNotifier {
 
       case 'capture_trigger':
         captureTriggerAt = (msg['at'] as num?)?.toDouble();
+        if (isCamera) _navigateToCapture?.call();
         notifyListeners();
         break;
 
       case 'calib_trigger':
         calibTriggerAt = (msg['at'] as num?)?.toDouble();
+        if (isCamera) _navigateToCalib?.call();
         notifyListeners();
         break;
 
@@ -521,6 +570,51 @@ class AppState extends ChangeNotifier {
                 ? d.copyWith(calibFrameCount: newTotal)
                 : d).toList(),
           );
+        }
+        break;
+
+      case 'calib_pair_cleared':
+        final pairIndex = (msg['frame_index'] as num?)?.toInt();
+        final rawCounts = msg['counts'] as Map<String, dynamic>?;
+        if (rawCounts != null && session != null) {
+          session = session!.copyWithDevices(
+            session!.devices.map((d) {
+              final newCount = (rawCounts[d.deviceId] as num?)?.toInt();
+              return newCount != null ? d.copyWith(calibFrameCount: newCount) : d;
+            }).toList(),
+          );
+          _setInfo('Usunięto parę kalibracyjną #$pairIndex');
+        }
+        break;
+
+      case 'capture_frame_deleted':
+        final deletedDeviceId = msg['device_id'] as String?;
+        final deletedIndex = (msg['frame_index'] as num?)?.toInt();
+        final remaining = (msg['total_frames'] as num?)?.toInt();
+        if (deletedDeviceId != null && remaining != null && session != null) {
+          session = session!.copyWithDevices(
+            session!.devices
+                .map((d) => d.deviceId == deletedDeviceId
+                    ? d.copyWith(captureFrameCount: remaining)
+                    : d)
+                .toList(),
+          );
+          _setInfo('Usunięto zdjęcie #$deletedIndex urządzenia $deletedDeviceId');
+        }
+        break;
+
+      case 'capture_images_cleared':
+        final clearedDeviceId = msg['device_id'] as String?;
+        final deletedCount = (msg['deleted_count'] as num?)?.toInt() ?? 0;
+        if (clearedDeviceId != null && session != null) {
+          session = session!.copyWithDevices(
+            session!.devices
+                .map((d) => d.deviceId == clearedDeviceId
+                    ? d.copyWith(captureFrameCount: 0)
+                    : d)
+                .toList(),
+          );
+          _setInfo('Usunięto $deletedCount zdjęć urządzenia $clearedDeviceId');
         }
         break;
 
@@ -628,6 +722,113 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  Future<bool> removeDevice(String targetDeviceId) async {
+    if (sessionId == null || deviceId.isEmpty) return false;
+    try {
+      await _api.removeDevice(sessionId!, targetDeviceId, deviceId);
+      _log.info('Usunięto urządzenie $targetDeviceId z sesji $sessionId');
+      return true;
+    } catch (e, st) {
+      _log.warn('Usuwanie urządzenia $targetDeviceId nie powiodło się', e, st);
+      _setError(e.toString());
+      return false;
+    }
+  }
+
+  Future<bool> promoteDevice(String targetDeviceId) async {
+    if (sessionId == null || deviceId.isEmpty) return false;
+    try {
+      final updated = await _api.promoteDevice(sessionId!, targetDeviceId, deviceId);
+      session = updated;
+      isLeader = false;
+      _setInfo('$targetDeviceId jest teraz liderem');
+      return true;
+    } catch (e, st) {
+      _log.warn('Mianowanie lidera $targetDeviceId nie powiodło się', e, st);
+      _setError(e.toString());
+      return false;
+    }
+  }
+
+  Future<bool> toggleDeviceCamera(String targetDeviceId, {required bool isCamera}) async {
+    if (sessionId == null || deviceId.isEmpty) return false;
+    try {
+      final updated = await _api.patchDevice(
+        sessionId!, targetDeviceId, deviceId, isCamera: isCamera,
+      );
+      session = updated;
+      notifyListeners();
+      return true;
+    } catch (e, st) {
+      _log.warn('Zmiana typu urządzenia $targetDeviceId nie powiodła się', e, st);
+      _setError(e.toString());
+      return false;
+    }
+  }
+
+  Future<bool> deleteCalibPair(int frameIndex) async {
+    if (sessionId == null || deviceId.isEmpty) return false;
+    try {
+      await _api.deleteCalibPair(sessionId!, frameIndex, deviceId);
+      _log.info('Usunięto parę kalibracyjną #$frameIndex');
+      return true;
+    } catch (e, st) {
+      _log.warn('Usuwanie pary kalibracyjnej #$frameIndex nie powiodło się', e, st);
+      _setError(e.toString());
+      return false;
+    }
+  }
+
+  Future<bool> deleteCaptureFrame(String targetDeviceId, int frameIndex) async {
+    if (sessionId == null || deviceId.isEmpty) return false;
+    try {
+      final resp = await _api.deleteCaptureFrame(
+          sessionId!, targetDeviceId, frameIndex, deviceId);
+      final remaining = resp['total_frames'] as int? ?? 0;
+      if (session != null) {
+        session = session!.copyWithDevices(
+          session!.devices
+              .map((d) => d.deviceId == targetDeviceId
+                  ? d.copyWith(captureFrameCount: remaining)
+                  : d)
+              .toList(),
+        );
+        notifyListeners();
+      }
+      _log.info('Usunięto zdjęcie #$frameIndex urządzenia $targetDeviceId');
+      return true;
+    } catch (e, st) {
+      _log.warn('Usuwanie zdjęcia #$frameIndex ($targetDeviceId) nie powiodło się', e, st);
+      _setError(e.toString());
+      return false;
+    }
+  }
+
+  Future<bool> deleteCaptureImages(String targetDeviceId) async {
+    if (sessionId == null || deviceId.isEmpty) return false;
+    try {
+      final resp = await _api.deleteCaptureImages(sessionId!, targetDeviceId, deviceId);
+      final deleted = resp['deleted_count'] as int? ?? 0;
+      if (session != null) {
+        session = session!.copyWithDevices(
+          session!.devices
+              .map((d) => d.deviceId == targetDeviceId
+                  ? d.copyWith(captureFrameCount: 0)
+                  : d)
+              .toList(),
+        );
+      }
+      _log.info('Usunięto $deleted zdjęć pomiarowych urządzenia $targetDeviceId');
+      _setInfo('Usunięto $deleted zdjęć urządzenia $targetDeviceId');
+      notifyListeners();
+      return true;
+    } catch (e, st) {
+      _log.warn('Usuwanie zdjęć pomiarowych nie powiodło się (device=$targetDeviceId)', e, st);
+      _setError(e.toString());
+      return false;
+    }
+  }
+
   Future<bool> uploadCaptureImage(Uint8List bytes) async {
     if (!isCamera || sessionId == null || deviceId.isEmpty) return false;
     try {
@@ -723,6 +924,7 @@ class AppState extends ChangeNotifier {
 
   @override
   void dispose() {
+    _infoClearTimer?.cancel();
     _ws?.sink.close();
     _wsSub?.cancel();
     super.dispose();

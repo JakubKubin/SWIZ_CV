@@ -10,6 +10,8 @@ import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import '../utils/log.dart';
 import '../widgets/app_banner.dart';
+import '../widgets/connection_dot.dart';
+import 'calib_images_screen.dart';
 
 class CalibrationScreen extends StatefulWidget {
   const CalibrationScreen({super.key});
@@ -68,7 +70,7 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
         (c) => c.lensDirection == CameraLensDirection.back,
         orElse: () => cameras.first,
       );
-      final ctrl = CameraController(back, ResolutionPreset.high, enableAudio: false);
+      final ctrl = CameraController(back, ResolutionPreset.veryHigh, enableAudio: false);
       await ctrl.initialize();
       if (!mounted) {
         await ctrl.dispose();
@@ -210,6 +212,65 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
     }
   }
 
+  Widget _buildCameraView(TextTheme tt) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        if (!kIsWeb && _camReady && _camController != null)
+          CameraPreview(_camController!)
+        else
+          const ColoredBox(color: Colors.black),
+        Positioned(
+          bottom: 0,
+          left: 0,
+          right: 0,
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(24, 48, 24, 56),
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.bottomCenter,
+                end: Alignment.topCenter,
+                colors: [Colors.black87, Colors.transparent],
+                stops: [0.55, 1.0],
+              ),
+            ),
+            child: _capturing
+                ? Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const CircularProgressIndicator(color: Colors.white),
+                      const SizedBox(height: 12),
+                      Text('Wysyłanie…',
+                          style:
+                              tt.bodyMedium?.copyWith(color: Colors.white70)),
+                    ],
+                  )
+                : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        (_remainingMs / 1000.0).toStringAsFixed(1),
+                        style: const TextStyle(
+                          fontSize: 100,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                          height: 1.0,
+                          letterSpacing: -4,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Przygotuj szachownicę',
+                        style: tt.titleMedium?.copyWith(color: Colors.white70),
+                      ),
+                    ],
+                  ),
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
@@ -235,76 +296,18 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
           ),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        children: [
-          AppBanners(
-            error: state.error,
-            info: state.info,
-            onClearError: state.clearError,
-            onClearInfo: state.clearInfo,
-          ),
-
-          // Camera preview + countdown / upload indicator
-          if (showCapturePanel)
-            Card(
-              clipBehavior: Clip.antiAlias,
-              child: Column(
-                children: [
-                  if (!kIsWeb)
-                    SizedBox(
-                      height: 260,
-                      width: double.infinity,
-                      child: _camReady && _camController != null
-                          ? CameraPreview(_camController!)
-                          : Container(
-                              color: Colors.black,
-                              child: const Center(
-                                child: CircularProgressIndicator(
-                                    color: Colors.white),
-                              ),
-                            ),
-                    ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                        vertical: 16, horizontal: 16),
-                    child: _capturing
-                        ? Column(
-                            children: [
-                              const CircularProgressIndicator(),
-                              const SizedBox(height: 8),
-                              Text('Wysyłanie…',
-                                  style: tt.bodySmall
-                                      ?.copyWith(color: cs.onSurfaceVariant)),
-                            ],
-                          )
-                        : Column(
-                            children: [
-                              Text('Przygotuj szachownicę',
-                                  style: tt.titleMedium?.copyWith(
-                                      fontWeight: FontWeight.w600)),
-                              const SizedBox(height: 8),
-                              Text(
-                                '${(_remainingMs / 1000.0).toStringAsFixed(1)} s',
-                                style: const TextStyle(
-                                  fontSize: 56,
-                                  fontWeight: FontWeight.bold,
-                                  color: AppColors.warning,
-                                  letterSpacing: -2,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text('Zdjęcie zostanie wykonane automatycznie',
-                                  style: tt.bodySmall
-                                      ?.copyWith(color: cs.onSurfaceVariant)),
-                            ],
-                          ),
-                  ),
-                ],
-              ),
-            ),
-
-          if (!showCapturePanel) ...[
+      body: showCapturePanel
+          ? _buildCameraView(tt)
+          : ListView(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              children: [
+                AppBanners(
+                  error: state.error,
+                  info: state.info,
+                  onClearError: state.clearError,
+                  onClearInfo: state.clearInfo,
+                ),
             // Instructions
             Card(
               child: Padding(
@@ -339,9 +342,31 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Postęp kalibracji',
-                        style: tt.titleSmall?.copyWith(
-                            color: cs.primary, fontWeight: FontWeight.w600)),
+                    Row(
+                      children: [
+                        Text('Postęp kalibracji',
+                            style: tt.titleSmall?.copyWith(
+                                color: cs.primary,
+                                fontWeight: FontWeight.w600)),
+                        const Spacer(),
+                        if (session != null &&
+                            session.devices.any(
+                                (d) => d.isCamera && d.calibFrameCount > 0))
+                          TextButton.icon(
+                            onPressed: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                  builder: (_) => const CalibImagesScreen()),
+                            ),
+                            icon: const Icon(Icons.photo_library_outlined,
+                                size: 16),
+                            label: const Text('Przeglądaj'),
+                            style: TextButton.styleFrom(
+                                padding: EdgeInsets.zero,
+                                visualDensity: VisualDensity.compact),
+                          ),
+                      ],
+                    ),
                     const SizedBox(height: 12),
                     if (session != null)
                       ...session.devices.map(
@@ -351,18 +376,21 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
                                 children: [
                                   Row(
                                     children: [
-                                      Container(
-                                        width: 6,
-                                        height: 6,
-                                        decoration: BoxDecoration(
-                                          color: d.isLeader
-                                              ? AppColors.stateReady
-                                              : cs.onSurfaceVariant,
-                                          shape: BoxShape.circle,
+                                      ConnectionDot(
+                                        active: d.deviceId == state.deviceId
+                                            ? state.wsConnected
+                                            : d.wsConnected,
+                                        activeColor: AppColors.success,
+                                        inactiveColor: cs.outline,
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        d.deviceId,
+                                        style: tt.bodySmall?.copyWith(
+                                          color: d.isLeader ? cs.primary : null,
+                                          fontWeight: d.isLeader ? FontWeight.w600 : null,
                                         ),
                                       ),
-                                      const SizedBox(width: 8),
-                                      Text(d.deviceId, style: tt.bodySmall),
                                       const Spacer(),
                                       Text('${d.calibFrameCount} klatek',
                                           style: tt.bodySmall?.copyWith(
@@ -520,10 +548,9 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
                 ),
               ),
 
-            const SizedBox(height: 8),
-          ],
-        ],
-      ),
+                const SizedBox(height: 8),
+              ],
+            ),
     );
   }
 }

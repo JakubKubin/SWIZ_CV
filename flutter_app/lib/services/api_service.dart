@@ -5,7 +5,7 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
-import '../models/models.dart';
+import '../models/models.dart'; // includes FrameInfo, SessionData, MeasurementResult
 import '../utils/log.dart';
 
 class ApiService {
@@ -130,6 +130,50 @@ class ApiService {
     if (r.statusCode != 204 && r.statusCode != 404) await _checkStatus(r);
   }
 
+  /// Leader removes another device from the session.
+  Future<void> removeDevice(
+    String sid,
+    String targetDeviceId,
+    String requesterId,
+  ) async {
+    final r = await http.delete(
+      _uri('/sessions/$sid/devices/$targetDeviceId'
+          '?requester_id=${Uri.encodeComponent(requesterId)}'),
+      headers: _baseHeaders,
+    );
+    if (r.statusCode != 204 && r.statusCode != 404) await _checkStatus(r);
+  }
+
+  Future<SessionData> promoteDevice(
+    String sid,
+    String targetDeviceId,
+    String requesterId,
+  ) async {
+    final r = await http.post(
+      _uri('/sessions/$sid/devices/$targetDeviceId/promote'
+          '?requester_id=${Uri.encodeComponent(requesterId)}'),
+      headers: _baseHeaders,
+    );
+    await _checkStatus(r);
+    return SessionData.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
+  Future<SessionData> patchDevice(
+    String sid,
+    String targetDeviceId,
+    String requesterId, {
+    required bool isCamera,
+  }) async {
+    final r = await http.patch(
+      _uri('/sessions/$sid/devices/$targetDeviceId'
+          '?requester_id=${Uri.encodeComponent(requesterId)}'),
+      headers: _jsonHeaders(),
+      body: jsonEncode({'is_camera': isCamera}),
+    );
+    await _checkStatus(r);
+    return SessionData.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
   Future<List<SessionData>> listSessions() async {
     final r = await http.get(_uri('/sessions'), headers: _baseHeaders);
     await _checkStatus(r);
@@ -197,6 +241,78 @@ class ApiService {
       _uri('/sessions/$sid/capture/trigger'),
       headers: _jsonHeaders(),
       body: jsonEncode({'delay_ms': delayMs}),
+    );
+    await _checkStatus(r);
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  Future<List<FrameInfo>> listCalibImages(String sid, String deviceId) async {
+    final r = await http.get(
+      _uri('/sessions/$sid/calibration/images/$deviceId'),
+      headers: _baseHeaders,
+    );
+    await _checkStatus(r);
+    return (jsonDecode(r.body) as List)
+        .map((j) => FrameInfo.fromJson(j as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<FrameInfo>> listCaptureImages(String sid, String deviceId) async {
+    final r = await http.get(
+      _uri('/sessions/$sid/capture/images/$deviceId'),
+      headers: _baseHeaders,
+    );
+    await _checkStatus(r);
+    return (jsonDecode(r.body) as List)
+        .map((j) => FrameInfo.fromJson(j as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Fetches raw image bytes from an absolute URL, sending the base headers.
+  Future<Uint8List> getImageBytes(String url) async {
+    final r = await http.get(Uri.parse(url), headers: _baseHeaders);
+    if (r.statusCode >= 400) throw ApiException(r.statusCode, 'Image load failed');
+    return r.bodyBytes;
+  }
+
+  Future<Map<String, dynamic>> deleteCalibPair(
+    String sid,
+    int frameIndex,
+    String requesterId,
+  ) async {
+    final r = await http.delete(
+      _uri('/sessions/$sid/calibration/pairs/$frameIndex'
+          '?requester_id=${Uri.encodeComponent(requesterId)}'),
+      headers: _baseHeaders,
+    );
+    await _checkStatus(r);
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> deleteCaptureFrame(
+    String sid,
+    String deviceId,
+    int frameIndex,
+    String requesterId,
+  ) async {
+    final r = await http.delete(
+      _uri('/sessions/$sid/capture/images/$deviceId/$frameIndex'
+          '?requester_id=${Uri.encodeComponent(requesterId)}'),
+      headers: _baseHeaders,
+    );
+    await _checkStatus(r);
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> deleteCaptureImages(
+    String sid,
+    String targetDeviceId,
+    String requesterId,
+  ) async {
+    final r = await http.delete(
+      _uri('/sessions/$sid/capture/images/$targetDeviceId'
+          '?requester_id=${Uri.encodeComponent(requesterId)}'),
+      headers: _baseHeaders,
     );
     await _checkStatus(r);
     return jsonDecode(r.body) as Map<String, dynamic>;

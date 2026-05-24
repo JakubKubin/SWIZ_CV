@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install *)",
+      "Bash(python -m pytest test_calibration.py test_measurement.py -v --tb=*)",
+      "Bash(docker cp *)",
+      "Bash(dart analyze *)",
+      "Bash(docker compose *)"
+    ]
+  }
+}

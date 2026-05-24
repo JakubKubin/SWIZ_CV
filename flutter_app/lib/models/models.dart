@@ -212,6 +212,22 @@ class SessionRef {
 }
 
 // ---------------------------------------------------------------------------
+// Informacja o pojedynczej klatce (kalibracja lub przechwycenie)
+// ---------------------------------------------------------------------------
+
+class FrameInfo {
+  final int index;
+  final String filename;
+
+  const FrameInfo({required this.index, required this.filename});
+
+  factory FrameInfo.fromJson(Map<String, dynamic> j) => FrameInfo(
+        index: j['index'] as int,
+        filename: j['filename'] as String,
+      );
+}
+
+// ---------------------------------------------------------------------------
 // Błąd API
 // ---------------------------------------------------------------------------
 

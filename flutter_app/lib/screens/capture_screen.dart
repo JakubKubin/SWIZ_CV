@@ -10,6 +10,7 @@ import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import '../utils/log.dart';
 import '../widgets/app_banner.dart';
+import 'capture_images_screen.dart';
 
 class CaptureScreen extends StatefulWidget {
   const CaptureScreen({super.key});
@@ -54,7 +55,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
         (c) => c.lensDirection == CameraLensDirection.back,
         orElse: () => cameras.first,
       );
-      final ctrl = CameraController(back, ResolutionPreset.high, enableAudio: false);
+      final ctrl = CameraController(back, ResolutionPreset.veryHigh, enableAudio: false);
       await ctrl.initialize();
       if (!mounted) {
         await ctrl.dispose();
@@ -176,6 +177,13 @@ class _CaptureScreenState extends State<CaptureScreen> {
     }
   }
 
+  void _browseCaptures() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const CaptureImagesScreen()),
+    );
+  }
+
   Future<void> _startMeasurement() async {
     await _appState.startMeasurement();
     if (mounted && _appState.error == null) {
@@ -184,6 +192,54 @@ class _CaptureScreenState extends State<CaptureScreen> {
             content: Text('Pipeline pomiaru uruchomiony — czekaj na wynik')),
       );
     }
+  }
+
+  Widget _buildCameraCountdown(TextTheme tt) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        if (!kIsWeb && _camReady && _camController != null)
+          CameraPreview(_camController!)
+        else
+          const ColoredBox(color: Colors.black),
+        Positioned(
+          bottom: 0,
+          left: 0,
+          right: 0,
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(24, 48, 24, 56),
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.bottomCenter,
+                end: Alignment.topCenter,
+                colors: [Colors.black87, Colors.transparent],
+                stops: [0.55, 1.0],
+              ),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  (_remainingMs / 1000.0).toStringAsFixed(1),
+                  style: const TextStyle(
+                    fontSize: 100,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                    height: 1.0,
+                    letterSpacing: -4,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Przygotuj się',
+                  style: tt.titleMedium?.copyWith(color: Colors.white70),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   @override
@@ -195,7 +251,6 @@ class _CaptureScreenState extends State<CaptureScreen> {
     final session = state.session;
 
     final myCaptures = state.myDevice?.captureFrameCount ?? 0;
-
     final allCaptured = session?.allCaptured ?? false;
     final isCountingDown = _remainingMs > 0;
 
@@ -210,191 +265,183 @@ class _CaptureScreenState extends State<CaptureScreen> {
           ),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        children: [
-          AppBanners(
-            error: state.error,
-            info: state.info,
-            onClearError: state.clearError,
-            onClearInfo: state.clearInfo,
-          ),
+      body: isCountingDown
+          ? _buildCameraCountdown(tt)
+          : ListView(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              children: [
+                AppBanners(
+                  error: state.error,
+                  info: state.info,
+                  onClearError: state.clearError,
+                  onClearInfo: state.clearInfo,
+                ),
 
-          // Countdown display
-          if (isCountingDown)
-            Card(
-              child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
-                child: Column(
-                  children: [
-                    Text('Przygotuj się',
-                        style: tt.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 12),
-                    Text(
-                      '${(_remainingMs / 1000.0).toStringAsFixed(1)} s',
-                      style: const TextStyle(
-                        fontSize: 64,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.warning,
-                        letterSpacing: -2,
+                // Device capture status
+                if (session != null)
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Status urządzeń',
+                              style: tt.titleSmall?.copyWith(
+                                  color: cs.primary,
+                                  fontWeight: FontWeight.w600)),
+                          const SizedBox(height: 12),
+                          ...session.devices.map(
+                            (d) => Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 4),
+                              child: d.isCamera
+                                  ? Row(
+                                      children: [
+                                        Container(
+                                          width: 6,
+                                          height: 6,
+                                          decoration: BoxDecoration(
+                                            color: d.captureFrameCount > 0
+                                                ? AppColors.success
+                                                : cs.outline,
+                                            shape: BoxShape.circle,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 10),
+                                        Expanded(
+                                          child: Text(d.deviceId,
+                                              style: tt.bodySmall),
+                                        ),
+                                        Text('${d.captureFrameCount} zdjęć',
+                                            style: tt.bodySmall?.copyWith(
+                                                color: cs.onSurfaceVariant)),
+                                        if (state.isLeader &&
+                                            d.captureFrameCount > 0) ...[
+                                          const SizedBox(width: 4),
+                                          IconButton(
+                                            icon: Icon(
+                                                Icons.photo_library_outlined,
+                                                size: 16,
+                                                color: cs.primary),
+                                            tooltip: 'Przeglądaj zdjęcia',
+                                            padding: EdgeInsets.zero,
+                                            constraints:
+                                                const BoxConstraints(),
+                                            onPressed: _browseCaptures,
+                                          ),
+                                        ],
+                                      ],
+                                    )
+                                  : Row(
+                                      children: [
+                                        Icon(Icons.computer,
+                                            size: 14,
+                                            color: cs.onSurfaceVariant),
+                                        const SizedBox(width: 10),
+                                        Expanded(
+                                          child: Text(d.deviceId,
+                                              style: tt.bodySmall?.copyWith(
+                                                  color:
+                                                      cs.onSurfaceVariant)),
+                                        ),
+                                        Text('admin',
+                                            style: tt.bodySmall?.copyWith(
+                                                color: cs.onSurfaceVariant)),
+                                      ],
+                                    ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    Text('Aparat zostanie uruchomiony automatycznie',
-                        style:
-                            tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
-                  ],
-                ),
-              ),
-            ),
+                  ),
 
-          if (!isCountingDown) ...[
-            // Device capture status
-            if (session != null)
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Status urządzeń',
-                          style: tt.titleSmall?.copyWith(
-                              color: cs.primary, fontWeight: FontWeight.w600)),
-                      const SizedBox(height: 12),
-                      ...session.devices.map(
-                        (d) => Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          child: d.isCamera
-                              ? Row(
-                                  children: [
-                                    Container(
-                                      width: 6,
-                                      height: 6,
-                                      decoration: BoxDecoration(
-                                        color: d.captureFrameCount > 0
-                                            ? AppColors.success
-                                            : cs.outline,
-                                        shape: BoxShape.circle,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: Text(d.deviceId,
-                                          style: tt.bodySmall),
-                                    ),
-                                    Text('${d.captureFrameCount} zdjęć',
-                                        style: tt.bodySmall?.copyWith(
-                                            color: cs.onSurfaceVariant)),
-                                  ],
-                                )
-                              : Row(
-                                  children: [
-                                    Icon(Icons.computer,
-                                        size: 14,
-                                        color: cs.onSurfaceVariant),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: Text(d.deviceId,
-                                          style: tt.bodySmall?.copyWith(
-                                              color: cs.onSurfaceVariant)),
-                                    ),
-                                    Text('admin',
-                                        style: tt.bodySmall?.copyWith(
-                                            color: cs.onSurfaceVariant)),
-                                  ],
-                                ),
-                        ),
+                const SizedBox(height: 12),
+
+                // Trigger (leader only)
+                if (state.isLeader)
+                  ElevatedButton.icon(
+                    onPressed: state.isLoading ? null : _triggerCapture,
+                    icon: const Icon(Icons.flash_on_outlined),
+                    label: const Text(
+                        'Wyzwól przechwycenie (3 s odliczanie)'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.stateProcessing,
+                      foregroundColor: Colors.white,
+                    ),
+                  )
+                else
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 12),
+                      child: Row(
+                        children: [
+                          Icon(Icons.info_outline,
+                              size: 16, color: cs.onSurfaceVariant),
+                          const SizedBox(width: 8),
+                          Text('Przechwycenie wyzwala lider sesji',
+                              style: tt.bodySmall
+                                  ?.copyWith(color: cs.onSurfaceVariant)),
+                        ],
                       ),
-                    ],
+                    ),
+                  ),
+
+                const SizedBox(height: 8),
+
+                // Manual capture / upload button
+                ElevatedButton.icon(
+                  onPressed: (_uploading || state.isLoading)
+                      ? null
+                      : _captureAndUpload,
+                  icon: _uploading
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(kIsWeb
+                          ? Icons.upload_file_outlined
+                          : Icons.camera_alt_outlined),
+                  label: Text(
+                    kIsWeb
+                        ? 'Prześlij zdjęcie pomiaru'
+                        : 'Zrób zdjęcie ($myCaptures wykonanych)',
                   ),
                 ),
-              ),
 
-            const SizedBox(height: 12),
+                const SizedBox(height: 12),
 
-            // Trigger (leader only)
-            if (state.isLeader)
-              ElevatedButton.icon(
-                onPressed: state.isLoading ? null : _triggerCapture,
-                icon: const Icon(Icons.flash_on_outlined),
-                label: const Text('Wyzwól przechwycenie (3 s odliczanie)'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.stateProcessing,
-                  foregroundColor: Colors.white,
-                ),
-              )
-            else
-              Card(
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  child: Row(
-                    children: [
-                      Icon(Icons.info_outline,
-                          size: 16, color: cs.onSurfaceVariant),
-                      const SizedBox(width: 8),
-                      Text('Przechwycenie wyzwala lider sesji',
-                          style: tt.bodySmall
-                              ?.copyWith(color: cs.onSurfaceVariant)),
-                    ],
+                // Start measurement (leader, when all captured)
+                if (state.isLeader)
+                  ElevatedButton.icon(
+                    onPressed: (allCaptured && !state.isLoading)
+                        ? _startMeasurement
+                        : null,
+                    icon: state.isLoading
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child:
+                                CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.straighten_outlined),
+                    label: Text(
+                      allCaptured
+                          ? 'Uruchom pomiar'
+                          : 'Poczekaj aż wszystkie urządzenia wykonają zdjęcie',
+                    ),
+                    style: allCaptured
+                        ? ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.stateDone,
+                            foregroundColor: Colors.white,
+                          )
+                        : null,
                   ),
-                ),
-              ),
-
-            const SizedBox(height: 8),
-
-            // Manual capture / upload button
-            ElevatedButton.icon(
-              onPressed:
-                  (_uploading || state.isLoading) ? null : _captureAndUpload,
-              icon: _uploading
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(kIsWeb
-                      ? Icons.upload_file_outlined
-                      : Icons.camera_alt_outlined),
-              label: Text(
-                kIsWeb
-                    ? 'Prześlij zdjęcie pomiaru'
-                    : 'Zrób zdjęcie ($myCaptures wykonanych)',
-              ),
+              ],
             ),
-
-            const SizedBox(height: 12),
-
-            // Start measurement (leader, when all captured)
-            if (state.isLeader)
-              ElevatedButton.icon(
-                onPressed: (allCaptured && !state.isLoading)
-                    ? _startMeasurement
-                    : null,
-                icon: state.isLoading
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.straighten_outlined),
-                label: Text(
-                  allCaptured
-                      ? 'Uruchom pomiar'
-                      : 'Poczekaj aż wszystkie urządzenia wykonają zdjęcie',
-                ),
-                style: allCaptured
-                    ? ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.stateDone,
-                        foregroundColor: Colors.white,
-                      )
-                    : null,
-              ),
-          ],
-        ],
-      ),
     );
   }
 }

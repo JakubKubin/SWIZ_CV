@@ -32,20 +32,25 @@ API:
 """
 
 import asyncio
+import io
 import logging
 import time
 
+import cv2 as _cv2
+from PIL import Image as _PilImage, ImageOps as _PilImageOps
+from calibration import find_corners as _find_corners
+
 from fastapi import (
-    FastAPI, HTTPException, UploadFile, File, Form,
+    FastAPI, HTTPException, UploadFile, File, Form, Query,
     WebSocket, WebSocketDisconnect, Response,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 
 from .schemas import (
     JoinRequest, SessionOut, DeviceOut,
     CalibStatusOut, TriggerRequest, TriggerOut,
-    MeasurementOut, HealthOut,
+    MeasurementOut, HealthOut, DevicePatchRequest,
 )
 from .session import store, SessionState
 from .tasks import ws_manager, calibrate_session, measure_session, synthetic_measure
@@ -84,6 +89,14 @@ async def _get_or_404(session_id: str):
         return await store.get(session_id)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Sesja '{session_id}' nie istnieje")
+
+
+def _normalize_image(content: bytes) -> bytes:
+    """Synchroniczna konwersja: EXIF-rotate + zapis PNG. Wywoływana w thread pool."""
+    img = _PilImageOps.exif_transpose(_PilImage.open(io.BytesIO(content))).convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
 
 
 def _session_to_out(session) -> SessionOut:
@@ -175,14 +188,30 @@ async def join_session(session_id: str, body: JoinRequest):
     session = await _get_or_404(session_id)
 
     if body.device_id in session.devices:
-        raise HTTPException(status_code=409, detail="Urządzenie już dołączyło do sesji")
+        return _session_to_out(session)
 
     if session.is_full():
         raise HTTPException(status_code=409, detail="Sesja jest pełna (maks. 10 urządzeń)")
 
-    # Tylko jedno urzadzenie moze byc leaderem
-    if body.is_leader and session.leader() is not None:
-        raise HTTPException(status_code=409, detail="Leader już istnieje w tej sesji")
+    # Tylko jedno urzadzenie moze byc leaderem.
+    # Wyjątek 1: rozłączony lider może być zastąpiony przez nowe urządzenie.
+    # Wyjątek 2: urządzenie bez kamery może przejąć rolę lidera od urządzenia z kamerą.
+    existing_leader = session.leader()
+    if body.is_leader and existing_leader is not None:
+        can_takeover = (
+            not existing_leader.ws_connected
+            or (not body.is_camera and existing_leader.is_camera)
+        )
+        if can_takeover:
+            existing_leader.is_leader = False
+            log.info("[%s] Lider przejęty przez %s (poprzedni: %s, ws=%s)", session_id, body.device_id, existing_leader.device_id, existing_leader.ws_connected)
+        else:
+            raise HTTPException(status_code=409, detail="Leader już istnieje w tej sesji")
+
+    # Jeśli sesja nie ma lidera, pierwszy dołączający przejmuje rolę automatycznie
+    if session.leader() is None:
+        body = body.model_copy(update={"is_leader": True})
+        log.info("[%s] Brak lidera - %s automatycznie zostaje liderem", session_id, body.device_id)
 
     from .session import Device
     device = Device(
@@ -220,22 +249,32 @@ async def delete_session(session_id: str):
 
 
 @app.delete("/sessions/{session_id}/devices/{device_id}", status_code=204, tags=["Sesje"])
-async def leave_session(session_id: str, device_id: str):
-    """Wypisuje jedno urządzenie z sesji (np. przy wyjściu z aplikacji).
+async def leave_session(
+    session_id: str,
+    device_id: str,
+    requester_id: str | None = Query(default=None, description="ID urządzenia żądającego usunięcia; lider może usunąć dowolne urządzenie"),
+):
+    """Wypisuje jedno urządzenie z sesji.
 
-    Sesja oraz jej dane (kalibracja, zdjęcia, wyniki) NIE są usuwane - dzięki
-    temu użytkownik może później wrócić do sesji i ponownie dołączyć tym samym
-    urządzeniem. Trwałe usunięcie wykonuje się jawnie przez DELETE /sessions/{id}.
+    Bez requester_id: urządzenie samo się wypisuje.
+    Z requester_id: wymagane aby requester był liderem sesji — może usunąć dowolne urządzenie.
     """
     session = await _get_or_404(session_id)
 
     if device_id not in session.devices:
         raise HTTPException(status_code=404, detail=f"Urządzenie '{device_id}' nie jest w sesji")
 
+    if requester_id is not None and requester_id != device_id:
+        requester = session.devices.get(requester_id)
+        if requester is None:
+            raise HTTPException(status_code=404, detail=f"Requester '{requester_id}' nie jest w sesji")
+        if not requester.is_leader:
+            raise HTTPException(status_code=403, detail="Tylko lider może usuwać inne urządzenia")
+
     del session.devices[device_id]
     await store.save(session_id)
-    log.info("[%s] Urządzenie opuściło sesję: %s (%d pozostało)",
-             session_id, device_id, len(session.devices))
+    log.info("[%s] Urządzenie usunięte: %s (przez: %s, pozostało: %d)",
+             session_id, device_id, requester_id or device_id, len(session.devices))
 
     await ws_manager.broadcast(session_id, {
         "event": "device_left",
@@ -244,6 +283,84 @@ async def leave_session(session_id: str, device_id: str):
     })
 
     return Response(status_code=204)
+
+
+@app.post("/sessions/{session_id}/devices/{device_id}/promote", response_model=SessionOut, tags=["Sesje"])
+async def promote_device(
+    session_id: str,
+    device_id: str,
+    requester_id: str = Query(..., description="ID bieżącego lidera autoryzującego operację"),
+):
+    """Przekazuje rolę lidera innemu urządzeniu w sesji.
+
+    Tylko aktualny lider może wywołać ten endpoint.
+    """
+    session = await _get_or_404(session_id)
+
+    requester = session.devices.get(requester_id)
+    if requester is None:
+        raise HTTPException(status_code=404, detail=f"Requester '{requester_id}' nie jest w sesji")
+    if not requester.is_leader:
+        raise HTTPException(status_code=403, detail="Tylko lider może przekazać rolę lidera")
+
+    target = session.devices.get(device_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail=f"Urządzenie '{device_id}' nie jest w sesji")
+    if target.is_leader:
+        return _session_to_out(session)
+
+    requester.is_leader = False
+    target.is_leader = True
+    await store.save(session_id)
+
+    log.info("[%s] Lider zmieniony: %s → %s", session_id, requester_id, device_id)
+    await ws_manager.broadcast(session_id, {
+        "event": "leader_changed",
+        "old_leader": requester_id,
+        "new_leader": device_id,
+    })
+
+    return _session_to_out(session)
+
+
+@app.patch("/sessions/{session_id}/devices/{device_id}", response_model=SessionOut, tags=["Sesje"])
+async def patch_device(
+    session_id: str,
+    device_id: str,
+    body: DevicePatchRequest,
+    requester_id: str = Query(..., description="ID lidera autoryzującego operację"),
+):
+    """Zmienia właściwości urządzenia (is_camera) po dołączeniu do sesji.
+
+    Tylko lider może zmieniać typ urządzenia.
+    Przy zmianie na is_camera=True tworzone są katalogi kalibracji i przechwytywania.
+    """
+    session = await _get_or_404(session_id)
+
+    requester = session.devices.get(requester_id)
+    if requester is None:
+        raise HTTPException(status_code=404, detail=f"Requester '{requester_id}' nie jest w sesji")
+    if not requester.is_leader:
+        raise HTTPException(status_code=403, detail="Tylko lider może zmieniać typ urządzenia")
+
+    target = session.devices.get(device_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail=f"Urządzenie '{device_id}' nie jest w sesji")
+
+    target.is_camera = body.is_camera
+    if body.is_camera:
+        session.calib_dir(device_id).mkdir(parents=True, exist_ok=True)
+        session.capture_dir(device_id).mkdir(parents=True, exist_ok=True)
+    await store.save(session_id)
+
+    log.info("[%s] Urządzenie %s: is_camera=%s (przez: %s)", session_id, device_id, body.is_camera, requester_id)
+    await ws_manager.broadcast(session_id, {
+        "event": "device_updated",
+        "device_id": device_id,
+        "is_camera": body.is_camera,
+    })
+
+    return _session_to_out(session)
 
 
 # ===========================================================================
@@ -262,7 +379,7 @@ async def upload_calib_image(
 ):
     """Przesyła jeden obraz kalibracyjny (szachownica) dla danego urządzenia.
 
-    Obrazy sa numerowane sekwencyjnie: frame_0000.jpg, frame_0001.jpg, ...
+    Obrazy sa numerowane sekwencyjnie: frame_0000.png, frame_0001.png, ...
     Wywołaj co najmniej 3 razy dla każdego urządzenia przed uruchomieniem kalibracji.
     """
     session = await _get_or_404(session_id)
@@ -274,29 +391,184 @@ async def upload_calib_image(
     calib_dir = session.calib_dir(device_id)
     calib_dir.mkdir(parents=True, exist_ok=True)
 
-    suffix = ".jpg"  # normalizuj do jpg
-    save_path = calib_dir / f"frame_{device.calib_frame_count:04d}{suffix}"
-
     content = await file.read()
-    save_path.write_bytes(content)
 
-    device.calib_frame_count += 1
+    # PIL is CPU-bound — run in thread pool so the event loop stays free
+    try:
+        png_bytes = await asyncio.to_thread(_normalize_image, content)
+    except Exception:
+        png_bytes = content
+
+    async with session._lock:
+        save_path = calib_dir / f"frame_{device.calib_frame_count:04d}.png"
+        await asyncio.to_thread(save_path.write_bytes, png_bytes)
+        device.calib_frame_count += 1
+        frame_index = device.calib_frame_count - 1
+        total = device.calib_frame_count
+
     await store.save(session_id)
-
     log.info("[%s] Kalibracja %s: klatka %d zapisana (%d B)",
-             session_id, device_id, device.calib_frame_count - 1, len(content))
+             session_id, device_id, frame_index, len(png_bytes))
 
     await ws_manager.broadcast(session_id, {
         "event": "calib_frame_uploaded",
         "device_id": device_id,
-        "total_frames": device.calib_frame_count,
+        "total_frames": total,
     })
 
-    return {
-        "device_id": device_id,
-        "frame_index": device.calib_frame_count - 1,
-        "total_frames": device.calib_frame_count,
-    }
+    return {"device_id": device_id, "frame_index": frame_index, "total_frames": total}
+
+
+@app.delete(
+    "/sessions/{session_id}/calibration/images/{target_device_id}",
+    status_code=200,
+    tags=["Kalibracja"],
+)
+async def delete_calib_images(
+    session_id: str,
+    target_device_id: str,
+    requester_id: str = Query(..., description="ID lidera autoryzującego operację"),
+):
+    """Usuwa wszystkie zdjęcia kalibracyjne dla danego urządzenia i resetuje licznik.
+
+    Tylko lider sesji może wywołać ten endpoint.
+    """
+    session = await _get_or_404(session_id)
+
+    requester = session.devices.get(requester_id)
+    if requester is None:
+        raise HTTPException(status_code=404, detail=f"Requester '{requester_id}' nie jest w sesji")
+    if not requester.is_leader:
+        raise HTTPException(status_code=403, detail="Tylko lider może usuwać zdjęcia kalibracyjne")
+
+    if target_device_id not in session.devices:
+        raise HTTPException(status_code=404, detail=f"Urządzenie '{target_device_id}' nie jest w sesji")
+
+    calib_dir = session.calib_dir(target_device_id)
+    deleted = 0
+    if calib_dir.exists():
+        for f in calib_dir.glob("frame_*"):
+            f.unlink()
+            deleted += 1
+
+    session.devices[target_device_id].calib_frame_count = 0
+    await store.save(session_id)
+
+    log.info("[%s] Usunięto %d zdjęć kalibracyjnych urządzenia %s (przez: %s)",
+             session_id, deleted, target_device_id, requester_id)
+
+    await ws_manager.broadcast(session_id, {
+        "event": "calib_images_cleared",
+        "device_id": target_device_id,
+        "deleted_count": deleted,
+    })
+
+    return {"device_id": target_device_id, "deleted_count": deleted}
+
+
+@app.get(
+    "/sessions/{session_id}/calibration/images/{device_id}",
+    tags=["Kalibracja"],
+)
+async def list_calib_images(session_id: str, device_id: str):
+    """Zwraca posortowaną listę indeksów zdjęć kalibracyjnych dla urządzenia."""
+    session = await _get_or_404(session_id)
+    if device_id not in session.devices:
+        raise HTTPException(status_code=404, detail=f"Urządzenie '{device_id}' nie jest w sesji")
+    calib_dir = session.calib_dir(device_id)
+    frames = sorted(calib_dir.glob("frame_*.png")) if calib_dir.exists() else []
+    return [{"index": int(f.stem.split("_")[1]), "filename": f.name} for f in frames]
+
+
+@app.get(
+    "/sessions/{session_id}/calibration/images/{device_id}/{frame_index}",
+    tags=["Kalibracja"],
+)
+async def get_calib_image(session_id: str, device_id: str, frame_index: int):
+    """Serwuje pojedyncze zdjęcie kalibracyjne."""
+    session = await _get_or_404(session_id)
+    if device_id not in session.devices:
+        raise HTTPException(status_code=404, detail=f"Urządzenie '{device_id}' nie jest w sesji")
+    path = session.calib_dir(device_id) / f"frame_{frame_index:04d}.png"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"Klatka {frame_index} nie istnieje")
+    return FileResponse(path, media_type="image/png")
+
+
+@app.get(
+    "/sessions/{session_id}/calibration/detection",
+    tags=["Kalibracja"],
+)
+async def get_calib_detection(session_id: str):
+    """Sprawdza wykrycie wzoru szachownicy dla każdej klatki kalibracyjnej.
+
+    Zwraca słownik: device_id → {frame_index: bool}.
+    """
+    session = await _get_or_404(session_id)
+    cameras = [d for d in session.devices.values() if d.is_camera]
+
+    def _run():
+        results = {}
+        for device in cameras:
+            calib_dir = session.calib_dir(device.device_id)
+            frames = sorted(calib_dir.glob("frame_*.png")) if calib_dir.exists() else []
+            device_results = {}
+            for f in frames:
+                idx = int(f.stem.split("_")[1])
+                try:
+                    img = _cv2.imread(str(f))
+                    corners = _find_corners(img) if img is not None else None
+                    device_results[idx] = corners is not None
+                except Exception as exc:
+                    log.warning("Detection error %s frame %d: %s", device.device_id, idx, exc)
+                    device_results[idx] = False
+            results[device.device_id] = device_results
+        return results
+
+    return await asyncio.to_thread(_run)
+
+
+@app.delete(
+    "/sessions/{session_id}/calibration/pairs/{frame_index}",
+    status_code=200,
+    tags=["Kalibracja"],
+)
+async def delete_calib_pair(
+    session_id: str,
+    frame_index: int,
+    requester_id: str = Query(..., description="ID lidera autoryzującego operację"),
+):
+    """Usuwa parę klatek kalibracyjnych (ten sam indeks ze wszystkich urządzeń-kamer)."""
+    session = await _get_or_404(session_id)
+    requester = session.devices.get(requester_id)
+    if requester is None:
+        raise HTTPException(status_code=404, detail=f"Requester '{requester_id}' nie jest w sesji")
+    if not requester.is_leader:
+        raise HTTPException(status_code=403, detail="Tylko lider może usuwać klatki kalibracyjne")
+
+    camera_devices = [d for d in session.devices.values() if d.is_camera]
+    deleted_from = []
+    counts = {}
+    for dev in camera_devices:
+        path = session.calib_dir(dev.device_id) / f"frame_{frame_index:04d}.png"
+        if path.exists():
+            path.unlink()
+            deleted_from.append(dev.device_id)
+        remaining = list(session.calib_dir(dev.device_id).glob("frame_*.png"))
+        dev.calib_frame_count = len(remaining)
+        counts[dev.device_id] = dev.calib_frame_count
+
+    await store.save(session_id)
+    log.info("[%s] Usunięto parę kalibracyjną %d (przez: %s, urządzenia: %s)",
+             session_id, frame_index, requester_id, deleted_from)
+
+    await ws_manager.broadcast(session_id, {
+        "event": "calib_pair_cleared",
+        "frame_index": frame_index,
+        "deleted_from": deleted_from,
+        "counts": counts,
+    })
+    return {"frame_index": frame_index, "deleted_from": deleted_from, "counts": counts}
 
 
 @app.post(
@@ -433,7 +705,7 @@ async def upload_capture_image(
 ):
     """Przesyła zdjęcie pomiarowe (obiektu na palecie) z danego urządzenia.
 
-    Obrazy są numerowane sekwencyjnie: capture_0000.jpg, capture_0001.jpg, ...
+    Obrazy są numerowane sekwencyjnie: capture_0000.png, capture_0001.png, ...
     Pipeline pomiarowy zawsze używa najnowszego zdjecia dla każdego urządzenia.
     """
     session = await _get_or_404(session_id)
@@ -451,20 +723,146 @@ async def upload_capture_image(
     capture_dir = session.capture_dir(device_id)
     capture_dir.mkdir(parents=True, exist_ok=True)
 
-    save_path = capture_dir / f"capture_{device.capture_frame_count:04d}.jpg"
     content = await file.read()
-    save_path.write_bytes(content)
 
-    device.capture_frame_count += 1
+    try:
+        png_bytes = await asyncio.to_thread(_normalize_image, content)
+    except Exception:
+        png_bytes = content
+
+    async with session._lock:
+        save_path = capture_dir / f"capture_{device.capture_frame_count:04d}.png"
+        await asyncio.to_thread(save_path.write_bytes, png_bytes)
+        device.capture_frame_count += 1
+        frame_index = device.capture_frame_count - 1
+        total = device.capture_frame_count
+
+    await store.save(session_id)
+    log.info("[%s] Zdjecie %s: capture %d (%d B)",
+             session_id, device_id, frame_index, len(png_bytes))
+
+    return {"device_id": device_id, "frame_index": frame_index, "total_frames": total}
+
+
+@app.delete(
+    "/sessions/{session_id}/capture/images/{target_device_id}",
+    status_code=200,
+    tags=["Przechwytywanie"],
+)
+async def delete_capture_images(
+    session_id: str,
+    target_device_id: str,
+    requester_id: str = Query(..., description="ID lidera autoryzującego operację"),
+):
+    """Usuwa wszystkie zdjęcia pomiarowe dla danego urządzenia i resetuje licznik.
+
+    Tylko lider sesji może wywołać ten endpoint.
+    """
+    session = await _get_or_404(session_id)
+
+    requester = session.devices.get(requester_id)
+    if requester is None:
+        raise HTTPException(status_code=404, detail=f"Requester '{requester_id}' nie jest w sesji")
+    if not requester.is_leader:
+        raise HTTPException(status_code=403, detail="Tylko lider może usuwać zdjęcia pomiarowe")
+
+    if target_device_id not in session.devices:
+        raise HTTPException(status_code=404, detail=f"Urządzenie '{target_device_id}' nie jest w sesji")
+
+    capture_dir = session.capture_dir(target_device_id)
+    deleted = 0
+    if capture_dir.exists():
+        for f in capture_dir.glob("capture_*"):
+            f.unlink()
+            deleted += 1
+
+    session.devices[target_device_id].capture_frame_count = 0
     await store.save(session_id)
 
-    log.info("[%s] Zdjecie %s: capture %d (%d B)",
-             session_id, device_id, device.capture_frame_count - 1, len(content))
+    log.info("[%s] Usunięto %d zdjęć pomiarowych urządzenia %s (przez: %s)",
+             session_id, deleted, target_device_id, requester_id)
 
+    await ws_manager.broadcast(session_id, {
+        "event": "capture_images_cleared",
+        "device_id": target_device_id,
+        "deleted_count": deleted,
+    })
+
+    return {"device_id": target_device_id, "deleted_count": deleted}
+
+
+@app.get(
+    "/sessions/{session_id}/capture/images/{device_id}",
+    tags=["Przechwytywanie"],
+)
+async def list_capture_images(session_id: str, device_id: str):
+    """Zwraca posortowaną listę indeksów zdjęć pomiarowych dla urządzenia."""
+    session = await _get_or_404(session_id)
+    if device_id not in session.devices:
+        raise HTTPException(status_code=404, detail=f"Urządzenie '{device_id}' nie jest w sesji")
+    capture_dir = session.capture_dir(device_id)
+    frames = sorted(capture_dir.glob("capture_*.png")) if capture_dir.exists() else []
+    return [{"index": int(f.stem.split("_")[1]), "filename": f.name} for f in frames]
+
+
+@app.get(
+    "/sessions/{session_id}/capture/images/{device_id}/{frame_index}",
+    tags=["Przechwytywanie"],
+)
+async def get_capture_image(session_id: str, device_id: str, frame_index: int):
+    """Serwuje pojedyncze zdjęcie pomiarowe."""
+    session = await _get_or_404(session_id)
+    if device_id not in session.devices:
+        raise HTTPException(status_code=404, detail=f"Urządzenie '{device_id}' nie jest w sesji")
+    path = session.capture_dir(device_id) / f"capture_{frame_index:04d}.png"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"Zdjęcie {frame_index} nie istnieje")
+    return FileResponse(path, media_type="image/png")
+
+
+@app.delete(
+    "/sessions/{session_id}/capture/images/{device_id}/{frame_index}",
+    status_code=200,
+    tags=["Przechwytywanie"],
+)
+async def delete_capture_frame(
+    session_id: str,
+    device_id: str,
+    frame_index: int,
+    requester_id: str = Query(..., description="ID lidera autoryzującego operację"),
+):
+    """Usuwa konkretne zdjęcie pomiarowe i aktualizuje licznik urządzenia."""
+    session = await _get_or_404(session_id)
+    requester = session.devices.get(requester_id)
+    if requester is None:
+        raise HTTPException(status_code=404, detail=f"Requester '{requester_id}' nie jest w sesji")
+    if not requester.is_leader:
+        raise HTTPException(status_code=403, detail="Tylko lider może usuwać zdjęcia pomiarowe")
+    if device_id not in session.devices:
+        raise HTTPException(status_code=404, detail=f"Urządzenie '{device_id}' nie jest w sesji")
+
+    path = session.capture_dir(device_id) / f"capture_{frame_index:04d}.png"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"Zdjęcie {frame_index} nie istnieje")
+    path.unlink()
+
+    remaining = list(session.capture_dir(device_id).glob("capture_*.png"))
+    session.devices[device_id].capture_frame_count = len(remaining)
+    await store.save(session_id)
+
+    log.info("[%s] Usunięto zdjęcie pomiarowe %d urządzenia %s (przez: %s)",
+             session_id, frame_index, device_id, requester_id)
+
+    await ws_manager.broadcast(session_id, {
+        "event": "capture_frame_deleted",
+        "device_id": device_id,
+        "frame_index": frame_index,
+        "total_frames": session.devices[device_id].capture_frame_count,
+    })
     return {
         "device_id": device_id,
-        "frame_index": device.capture_frame_count - 1,
-        "total_frames": device.capture_frame_count,
+        "frame_index": frame_index,
+        "total_frames": session.devices[device_id].capture_frame_count,
     }
 
 

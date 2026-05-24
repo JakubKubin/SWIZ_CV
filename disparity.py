@@ -24,6 +24,7 @@ import numpy as np
 from pathlib import Path
 from dataclasses import dataclass
 
+import config
 from calibration import StereoParams, load_params
 
 log = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ class SGBMConfig:
     speckle_range:   1-2
     """
     min_disparity: int = 0
-    num_disparities: int = 64
+    num_disparities: int = config.SGBM_NUM_DISPARITIES
     block_size: int = 7
     p1: int = 8 * 3 * 7 ** 2      # 8 * kanaly * block_size^2
     p2: int = 32 * 3 * 7 ** 2     # 32 * kanaly * block_size^2

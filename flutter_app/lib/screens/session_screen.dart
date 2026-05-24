@@ -5,12 +5,60 @@ import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_banner.dart';
+import '../widgets/connection_dot.dart';
 import 'calibration_screen.dart';
 import 'capture_screen.dart';
 import 'results_screen.dart';
 
-class SessionScreen extends StatelessWidget {
+class SessionScreen extends StatefulWidget {
   const SessionScreen({super.key});
+
+  @override
+  State<SessionScreen> createState() => _SessionScreenState();
+}
+
+class _SessionScreenState extends State<SessionScreen> {
+  late final AppState _appState;
+
+  @override
+  void initState() {
+    super.initState();
+    _appState = context.read<AppState>();
+    _appState.registerNavigation(
+      toCalib: _autoNavigateToCalib,
+      toCapture: _autoNavigateToCapture,
+    );
+  }
+
+  @override
+  void dispose() {
+    _appState.unregisterNavigation();
+    super.dispose();
+  }
+
+  void _autoNavigateToCalib() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      // If CalibrationScreen was already active its _onStateChange cleared the
+      // trigger during notifyListeners() — skip navigation in that case.
+      if (context.read<AppState>().calibTriggerAt == null) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const CalibrationScreen()),
+      );
+    });
+  }
+
+  void _autoNavigateToCapture() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (context.read<AppState>().captureTriggerAt == null) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const CaptureScreen()),
+      );
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -105,7 +153,9 @@ class _SessionBody extends StatelessWidget {
             style: tt.labelMedium
                 ?.copyWith(color: cs.onSurfaceVariant, letterSpacing: 0.3)),
         const SizedBox(height: 6),
-        ...session.devices.map((d) => _DeviceCard(device: d, cs: cs, tt: tt)),
+        ...session.devices.map(
+          (d) => _DeviceCard(device: d, appState: appState, cs: cs, tt: tt),
+        ),
 
         const SizedBox(height: 16),
 
@@ -197,15 +247,12 @@ class _WsStatusRow extends StatelessWidget {
     final connected = appState.wsConnected;
     return Row(
       children: [
-        Container(
-          width: 6,
-          height: 6,
-          decoration: BoxDecoration(
-            color: connected ? AppColors.success : cs.outline,
-            shape: BoxShape.circle,
-          ),
+        ConnectionDot(
+          active: connected,
+          activeColor: AppColors.success,
+          inactiveColor: cs.outline,
         ),
-        const SizedBox(width: 8),
+        const SizedBox(width: 4),
         Text(
           connected
               ? 'WebSocket  ·  offset ${appState.serverTimeOffset.toStringAsFixed(3)} s'
@@ -224,13 +271,27 @@ class _WsStatusRow extends StatelessWidget {
 
 class _DeviceCard extends StatelessWidget {
   final DeviceInfo device;
+  final AppState appState;
   final ColorScheme cs;
   final TextTheme tt;
 
-  const _DeviceCard({required this.device, required this.cs, required this.tt});
+  const _DeviceCard({
+    required this.device,
+    required this.appState,
+    required this.cs,
+    required this.tt,
+  });
 
   @override
   Widget build(BuildContext context) {
+    // For the own device use the live local WS state; for others use server data.
+    final isConnected = device.deviceId == appState.deviceId
+        ? appState.wsConnected
+        : device.wsConnected;
+
+    final isOwnDevice = device.deviceId == appState.deviceId;
+    final canManage = appState.isLeader && !isOwnDevice;
+
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 4),
       child: ListTile(
@@ -246,26 +307,27 @@ class _DeviceCard extends StatelessWidget {
           child: Icon(
             device.isLeader
                 ? Icons.account_circle_outlined
-                : Icons.smartphone_outlined,
+                : device.isCamera
+                    ? Icons.smartphone_outlined
+                    : Icons.computer_outlined,
             size: 20,
             color: device.isLeader ? AppColors.stateReady : cs.onSurfaceVariant,
           ),
         ),
         title: Text(device.deviceId, style: tt.bodyMedium),
-        subtitle: Text(device.mac,
-            style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+        subtitle: Text(
+          '${device.mac}${device.isLeader ? '  ·  lider' : ''}${!device.isCamera ? '  ·  admin' : ''}',
+          style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
+        ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: 6,
-              height: 6,
-              decoration: BoxDecoration(
-                color: device.wsConnected ? AppColors.success : cs.outline,
-                shape: BoxShape.circle,
-              ),
+            ConnectionDot(
+              active: isConnected,
+              activeColor: AppColors.success,
+              inactiveColor: cs.outline,
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 6),
             Column(
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.end,
@@ -276,9 +338,113 @@ class _DeviceCard extends StatelessWidget {
                     style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
               ],
             ),
+            if (canManage) ...[
+              const SizedBox(width: 4),
+              _DeviceMenu(device: device, appState: appState, cs: cs),
+            ],
           ],
         ),
       ),
+    );
+  }
+}
+
+class _DeviceMenu extends StatelessWidget {
+  final DeviceInfo device;
+  final AppState appState;
+  final ColorScheme cs;
+
+  const _DeviceMenu({
+    required this.device,
+    required this.appState,
+    required this.cs,
+  });
+
+  Future<void> _confirmRemove(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Usuń urządzenie'),
+        content: Text(
+          'Usunąć ${device.deviceId} z sesji?\n'
+          'Urządzenie straci połączenie i będzie musiało ponownie dołączyć.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Anuluj'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child:
+                Text('Usuń', style: TextStyle(color: cs.error)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await appState.removeDevice(device.deviceId);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<String>(
+      icon: Icon(Icons.more_vert, size: 18, color: cs.onSurfaceVariant),
+      onSelected: (action) async {
+        switch (action) {
+          case 'promote':
+            await appState.promoteDevice(device.deviceId);
+          case 'camera_on':
+            await appState.toggleDeviceCamera(device.deviceId, isCamera: true);
+          case 'camera_off':
+            await appState.toggleDeviceCamera(device.deviceId, isCamera: false);
+          case 'remove':
+            if (context.mounted) await _confirmRemove(context);
+        }
+      },
+      itemBuilder: (_) => [
+        if (!device.isLeader)
+          const PopupMenuItem(
+            value: 'promote',
+            child: ListTile(
+              leading: Icon(Icons.star_outline),
+              title: Text('Mianuj liderem'),
+              contentPadding: EdgeInsets.zero,
+              visualDensity: VisualDensity.compact,
+            ),
+          ),
+        if (!device.isCamera)
+          const PopupMenuItem(
+            value: 'camera_on',
+            child: ListTile(
+              leading: Icon(Icons.smartphone_outlined),
+              title: Text('Ustaw jako kamera'),
+              contentPadding: EdgeInsets.zero,
+              visualDensity: VisualDensity.compact,
+            ),
+          )
+        else
+          const PopupMenuItem(
+            value: 'camera_off',
+            child: ListTile(
+              leading: Icon(Icons.computer_outlined),
+              title: Text('Ustaw jako admin'),
+              contentPadding: EdgeInsets.zero,
+              visualDensity: VisualDensity.compact,
+            ),
+          ),
+        PopupMenuItem(
+          value: 'remove',
+          child: ListTile(
+            leading: Icon(Icons.person_remove_outlined, color: cs.error),
+            title: Text('Usuń z sesji',
+                style: TextStyle(color: cs.error)),
+            contentPadding: EdgeInsets.zero,
+            visualDensity: VisualDensity.compact,
+          ),
+        ),
+      ],
     );
   }
 }

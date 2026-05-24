@@ -82,6 +82,14 @@ class MeasurementOut(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Zarządzanie urządzeniami
+# ---------------------------------------------------------------------------
+
+class DevicePatchRequest(BaseModel):
+    is_camera: bool = Field(..., description="True = urządzenie z kamerą; False = tylko admin")
+
+
+# ---------------------------------------------------------------------------
 # Pomocnicze
 # ---------------------------------------------------------------------------
 

@@ -97,6 +97,7 @@ class Session:
         self.calib_result: Optional[CalibResult] = None
         self.meas_result: Optional[MeasResult] = None
         self.data_root = data_root
+        self._lock = asyncio.Lock()  # per-session lock for concurrent mutations
 
     # --- Sciezki -----------------------------------------------------------
 
