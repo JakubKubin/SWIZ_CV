@@ -225,7 +225,7 @@ class StereoParams:
 # Wykrywanie naroznikow szachownicy
 # ---------------------------------------------------------------------------
 
-def _board_points() -> np.ndarray:
+def _board_points(is_landscape: bool = False) -> np.ndarray:
     """Generuje wspolrzedne 3D naroznikow szachownicy w ukladzie wzorca.
 
     Szachownica jest traktowana jako plaska (Z=0). Wspolrzedne X,Y sa
@@ -238,7 +238,10 @@ def _board_points() -> np.ndarray:
     """
     pts = np.zeros((BOARD_ROWS * BOARD_COLS, 3), np.float32)
     # mgrid generuje siatke indeksow, reshape(-1,2) spłaszcza do listy punktow
-    pts[:, :2] = np.mgrid[0:BOARD_ROWS, 0:BOARD_COLS].T.reshape(-1, 2)
+    if is_landscape:
+        pts[:, :2] = np.mgrid[0:BOARD_COLS, 0:BOARD_ROWS].T.reshape(-1, 2)
+    else:
+        pts[:, :2] = np.mgrid[0:BOARD_ROWS, 0:BOARD_COLS].T.reshape(-1, 2)
     return pts * SQUARE_SIZE
 
 
@@ -271,6 +274,14 @@ def find_corners(image: np.ndarray) -> Optional[np.ndarray]:
     # scale = wspolczynnik z oryginalu do kopii roboczej; do przeliczenia narozników
     # z powrotem mnozymy przez 1/scale.
     h, w = gray_full.shape[:2]
+    
+    # Automatyczne dopasowanie siatki w zaleznosci od orientacji obrazu
+    is_landscape = w > h
+    if is_landscape:
+        pattern_size = (BOARD_COLS, BOARD_ROWS)
+    else:
+        pattern_size = (BOARD_ROWS, BOARD_COLS)
+
     scale = 1.0
     gray = gray_full
     if w > config.CORNER_DETECT_MAX_WIDTH:
@@ -279,13 +290,13 @@ def find_corners(image: np.ndarray) -> Optional[np.ndarray]:
 
     # Metoda SB: dokladniejsza, wbudowana precyzja subpikselowa w jednym przejsciu
     found, corners = cv2.findChessboardCornersSB(
-        gray, (BOARD_ROWS, BOARD_COLS),
+        gray, pattern_size,
         flags=cv2.CALIB_CB_EXHAUSTIVE | cv2.CALIB_CB_ACCURACY,
     )
     if not found:
         # Fallback: klasyczna metoda findChessboardCorners
         found, corners = cv2.findChessboardCorners(
-            gray, (BOARD_ROWS, BOARD_COLS),
+            gray, pattern_size,
             flags=cv2.CALIB_CB_ADAPTIVE_THRESH + cv2.CALIB_CB_NORMALIZE_IMAGE + cv2.CALIB_CB_FAST_CHECK,
         )
     if not found:
@@ -319,7 +330,6 @@ def collect_points(image_paths: list[str]) -> CalibrationData:
         CalibrationData z zebranymi punktami 2D i 3D
     """
     obj_points, img_points, img_size = [], [], None
-    objp = _board_points()
     for path in image_paths:
         img = cv2.imread(path)
         if img is None:
@@ -328,6 +338,8 @@ def collect_points(image_paths: list[str]) -> CalibrationData:
         # Rozmiar obrazu pobieramy z pierwszej poprawnie wczytanej klatki
         if img_size is None:
             img_size = (img.shape[1], img.shape[0])
+            is_landscape = img_size[0] > img_size[1]
+            objp = _board_points(is_landscape)
         corners = find_corners(img)
         if corners is None:
             log.warning("Brak naroznikow: %s", path)
@@ -364,7 +376,6 @@ def collect_stereo_points(
     Returns:
         StereoCalibrationData z dopasowanymi parami punktow
     """
-    objp = _board_points()
     obj_pts, left_pts, right_pts, img_size = [], [], [], None
     for lp, rp in zip(left_paths, right_paths):
         l_img, r_img = cv2.imread(lp), cv2.imread(rp)
@@ -378,6 +389,8 @@ def collect_stereo_points(
         # zakladamy, ze obie kamery maja te sama rozdzielczosc.
         if img_size is None:
             img_size = (l_img.shape[1], l_img.shape[0])
+            is_landscape = img_size[0] > img_size[1]
+            objp = _board_points(is_landscape)
         if (r_img.shape[1], r_img.shape[0]) != (l_img.shape[1], l_img.shape[0]):
             log.warning("Rozne rozdzielczosci w parze (%s vs %s): %s, %s",
                         (l_img.shape[1], l_img.shape[0]),

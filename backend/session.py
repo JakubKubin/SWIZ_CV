@@ -98,6 +98,8 @@ class Session:
         self.meas_result: Optional[MeasResult] = None
         self.data_root = data_root
         self._lock = asyncio.Lock()  # per-session lock for concurrent mutations
+        # device_id → {frame_index → corners_detected}; populated on upload
+        self.calib_detection: dict[str, dict[int, bool]] = {}
 
     # --- Sciezki -----------------------------------------------------------
 
@@ -127,7 +129,14 @@ class Session:
         return len(self.devices) >= 10
 
     def left_camera(self) -> Optional["Device"]:
-        """Lewa kamera stereo: is_camera=True, lider pierwszeński, potem kolejność dołączenia."""
+        """Lewa kamera stereo: przypisywana na podstawie stałego ID z config.py,
+        a w przypadku braku mapowania - na podstawie kolejności dołączenia."""
+        # 1. Spróbuj przypisać na podstawie statycznej konfiguracji
+        left_id = getattr(config, "LEFT_CAMERA_DEVICE_ID", None)
+        if left_id and left_id in self.devices and self.devices[left_id].is_camera:
+            return self.devices[left_id]
+
+        # 2. Fallback do automatycznego wykrywania (lider, kolejność dołączenia)
         cams = sorted(
             (d for d in self.devices.values() if d.is_camera),
             key=lambda d: (not d.is_leader, d.joined_at),
@@ -135,11 +144,24 @@ class Session:
         return cams[0] if cams else None
 
     def right_camera(self) -> Optional["Device"]:
-        """Prawa kamera stereo: druga kamera wg tej samej kolejności co left_camera."""
+        """Prawa kamera stereo: przypisywana na podstawie stałego ID z config.py,
+        a w przypadku braku mapowania - na podstawie kolejności dołączenia."""
+        # 1. Spróbuj przypisać na podstawie statycznej konfiguracji
+        right_id = getattr(config, "RIGHT_CAMERA_DEVICE_ID", None)
+        if right_id and right_id in self.devices and self.devices[right_id].is_camera:
+            return self.devices[right_id]
+
+        # 2. Fallback do automatycznego wykrywania (druga kamera po lewej)
         cams = sorted(
             (d for d in self.devices.values() if d.is_camera),
             key=lambda d: (not d.is_leader, d.joined_at),
         )
+        # Zabezpieczenie: jeśli zdefiniowano lewą kamerę statycznie, odfiltruj ją
+        left_id = getattr(config, "LEFT_CAMERA_DEVICE_ID", None)
+        if left_id:
+            cams = [c for c in cams if c.device_id != left_id]
+            return cams[0] if cams else None
+
         return cams[1] if len(cams) >= 2 else None
 
     def min_calib_frames(self) -> int:
@@ -166,6 +188,7 @@ class Session:
             "devices": {did: asdict(d) for did, d in self.devices.items()},
             "calib_result": asdict(self.calib_result) if self.calib_result else None,
             "meas_result": asdict(self.meas_result) if self.meas_result else None,
+            "calib_detection": self.calib_detection,
         }
 
     @classmethod
@@ -185,6 +208,13 @@ class Session:
             session.calib_result = CalibResult(**data["calib_result"])
         if data.get("meas_result"):
             session.meas_result = MeasResult(**data["meas_result"])
+
+        # JSON keys are always strings; convert frame indices back to int.
+        raw = data.get("calib_detection", {})
+        session.calib_detection = {
+            did: {int(k): v for k, v in frames.items()}
+            for did, frames in raw.items()
+        }
 
         return session
 

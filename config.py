@@ -17,7 +17,21 @@ load_dotenv()
 
 BOARD_ROWS: int = int(os.environ.get("CHECKERBOARD_ROWS", 5))
 BOARD_COLS: int = int(os.environ.get("CHECKERBOARD_COLS", 8))
-SQUARE_SIZE_MM: float = float(os.environ.get("SQUARE_SIZE_MM", 15.0))  # fizyczny rozmiar kwadratu [mm]
+SQUARE_SIZE_MM: float = float(os.environ.get("SQUARE_SIZE_MM", 44.0))  # fizyczny rozmiar kwadratu [mm]
+
+# ---------------------------------------------------------------------------
+# Mapowanie urządzeń stereo (przypisanie roli na podstawie unikalnego ID)
+# ---------------------------------------------------------------------------
+# Przypisuje na stałe, który device_id odpowiada lewej i prawej kamerze,
+# co zapobiega losowej zamianie stron (race condition) przy łączeniu WebSockets.
+LEFT_CAMERA_DEVICE_ID: str = os.environ.get("LEFT_CAMERA_DEVICE_ID", "device_2927")
+RIGHT_CAMERA_DEVICE_ID: str = os.environ.get("RIGHT_CAMERA_DEVICE_ID", "device_2112")
+
+# Automatyczny obrót wszystkich przesyłanych zdjęć (0, 90, 180, 270)
+# Przydatne, gdy telefony są fizycznie w poziomie (landscape), ale zapisują pliki w pionie (portrait).
+IMAGE_ROTATE: int = int(os.environ.get("IMAGE_ROTATE", 0))
+
+
 
 # ---------------------------------------------------------------------------
 # Sciezki

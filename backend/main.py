@@ -39,6 +39,7 @@ import time
 import cv2 as _cv2
 from PIL import Image as _PilImage, ImageOps as _PilImageOps
 from calibration import find_corners as _find_corners
+import config
 
 from fastapi import (
     FastAPI, HTTPException, UploadFile, File, Form, Query,
@@ -92,11 +93,34 @@ async def _get_or_404(session_id: str):
 
 
 def _normalize_image(content: bytes) -> bytes:
-    """Synchroniczna konwersja: EXIF-rotate + zapis PNG. Wywoływana w thread pool."""
+    """Synchroniczna konwersja: EXIF-rotate + zapis PNG. Wywoływana w thread pool.
+
+    Obsługuje również automatyczny obrót całego obrazu na podstawie config.IMAGE_ROTATE.
+    """
     img = _PilImageOps.exif_transpose(_PilImage.open(io.BytesIO(content))).convert("RGB")
+
+    rot_angle = getattr(config, "IMAGE_ROTATE", 0)
+    if rot_angle == 90:
+        img = img.transpose(_PilImage.ROTATE_270)  # 90 CW (Pillow rotation is CCW by default, so transposing 270 CCW rotates it 90 CW)
+    elif rot_angle == 180:
+        img = img.transpose(_PilImage.ROTATE_180)
+    elif rot_angle == 270:
+        img = img.transpose(_PilImage.ROTATE_90)   # 90 CCW
+
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
+
+
+def _detect_corners_in_file(path) -> bool:
+    """Returns True if checkerboard corners are found. Called in a thread pool."""
+    img = _cv2.imread(str(path))
+    if img is None:
+        return False
+    try:
+        return _find_corners(img) is not None
+    except Exception:
+        return False
 
 
 def _session_to_out(session) -> SessionOut:
@@ -397,6 +421,7 @@ async def upload_calib_image(
     try:
         png_bytes = await asyncio.to_thread(_normalize_image, content)
     except Exception:
+        log.warning("[%s] Nie można przetworzyć obrazu kalibracyjnego %s: %s", session_id, device_id, "błąd konwersji do PNG - zapis oryginału")
         png_bytes = content
 
     async with session._lock:
@@ -406,9 +431,13 @@ async def upload_calib_image(
         frame_index = device.calib_frame_count - 1
         total = device.calib_frame_count
 
+    # Detect corners outside the lock — CPU-intensive, reads the just-saved file.
+    detected = await asyncio.to_thread(_detect_corners_in_file, save_path)
+    session.calib_detection.setdefault(device_id, {})[frame_index] = detected
+
     await store.save(session_id)
-    log.info("[%s] Kalibracja %s: klatka %d zapisana (%d B)",
-             session_id, device_id, frame_index, len(png_bytes))
+    log.info("[%s] Kalibracja %s: klatka %d zapisana (%d B, wykryto=%s)",
+             session_id, device_id, frame_index, len(png_bytes), detected)
 
     await ws_manager.broadcast(session_id, {
         "event": "calib_frame_uploaded",
@@ -500,32 +529,13 @@ async def get_calib_image(session_id: str, device_id: str, frame_index: int):
     tags=["Kalibracja"],
 )
 async def get_calib_detection(session_id: str):
-    """Sprawdza wykrycie wzoru szachownicy dla każdej klatki kalibracyjnej.
+    """Zwraca zakeszowane wyniki wykrycia szachownicy dla każdej klatki.
 
+    Wyniki są zapisywane podczas uploadu — bez ponownego uruchamiania OpenCV.
     Zwraca słownik: device_id → {frame_index: bool}.
     """
     session = await _get_or_404(session_id)
-    cameras = [d for d in session.devices.values() if d.is_camera]
-
-    def _run():
-        results = {}
-        for device in cameras:
-            calib_dir = session.calib_dir(device.device_id)
-            frames = sorted(calib_dir.glob("frame_*.png")) if calib_dir.exists() else []
-            device_results = {}
-            for f in frames:
-                idx = int(f.stem.split("_")[1])
-                try:
-                    img = _cv2.imread(str(f))
-                    corners = _find_corners(img) if img is not None else None
-                    device_results[idx] = corners is not None
-                except Exception as exc:
-                    log.warning("Detection error %s frame %d: %s", device.device_id, idx, exc)
-                    device_results[idx] = False
-            results[device.device_id] = device_results
-        return results
-
-    return await asyncio.to_thread(_run)
+    return session.calib_detection
 
 
 @app.delete(
@@ -557,6 +567,7 @@ async def delete_calib_pair(
         remaining = list(session.calib_dir(dev.device_id).glob("frame_*.png"))
         dev.calib_frame_count = len(remaining)
         counts[dev.device_id] = dev.calib_frame_count
+        session.calib_detection.get(dev.device_id, {}).pop(frame_index, None)
 
     await store.save(session_id)
     log.info("[%s] Usunięto parę kalibracyjną %d (przez: %s, urządzenia: %s)",
@@ -728,6 +739,8 @@ async def upload_capture_image(
     try:
         png_bytes = await asyncio.to_thread(_normalize_image, content)
     except Exception:
+        log.warning("[%s] Nie można przetworzyć obrazu przechwycenia %s: %s",
+                    session_id, device_id, "błąd konwersji do PNG - zapis oryginału")
         png_bytes = content
 
     async with session._lock:

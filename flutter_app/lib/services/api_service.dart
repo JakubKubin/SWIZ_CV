@@ -222,6 +222,22 @@ class ApiService {
     return jsonDecode(r.body) as Map<String, dynamic>;
   }
 
+  /// Returns detection status per device per frame index: device_id → {frameIndex → detected}.
+  Future<Map<String, Map<int, bool>>> getCalibDetection(String sid) async {
+    final r = await http.get(
+      _uri('/sessions/$sid/calibration/detection'),
+      headers: _baseHeaders,
+    );
+    await _checkStatus(r);
+    final raw = jsonDecode(r.body) as Map<String, dynamic>;
+    return raw.map((deviceId, frames) => MapEntry(
+          deviceId,
+          (frames as Map<String, dynamic>).map(
+            (k, v) => MapEntry(int.parse(k), v as bool),
+          ),
+        ));
+  }
+
   // -------------------------------------------------------------------------
   // Przechwytywanie
   // -------------------------------------------------------------------------

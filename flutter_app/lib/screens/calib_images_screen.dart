@@ -28,6 +28,9 @@ class _CalibImagesScreenState extends State<CalibImagesScreen> {
   /// image bytes cache: "$deviceId/$frameIndex" → bytes
   final Map<String, Uint8List> _cache = {};
 
+  /// detection results: device_id → {frameIndex → cornerDetected}
+  Map<String, Map<int, bool>>? _detection;
+
   late final AppState _appState;
   late final ApiService _api;
 
@@ -48,14 +51,23 @@ class _CalibImagesScreenState extends State<CalibImagesScreen> {
     }
 
     final cameras = session.devices.where((d) => d.isCamera).toList();
-    final results = await Future.wait(
+    final sid = session.sessionId;
+
+    // Start both fetches in parallel.
+    final framesFuture = Future.wait(
       cameras.map((d) => _api
-          .listCalibImages(session.sessionId, d.deviceId)
+          .listCalibImages(sid, d.deviceId)
           .then((frames) => MapEntry(d.deviceId, frames))
           .catchError((_) => MapEntry(d.deviceId, <FrameInfo>[]))),
     );
+    final detectionFuture = _api
+        .getCalibDetection(sid)
+        .catchError((_) => <String, Map<int, bool>>{});
 
-    final byDevice = Map.fromEntries(results);
+    final frameResults = await framesFuture;
+    final detection = await detectionFuture;
+
+    final byDevice = Map.fromEntries(frameResults);
     final allIndices = <int>{};
     for (final frames in byDevice.values) {
       allIndices.addAll(frames.map((f) => f.index));
@@ -64,6 +76,7 @@ class _CalibImagesScreenState extends State<CalibImagesScreen> {
     setState(() {
       _framesByDevice = byDevice;
       _pairIndices = allIndices.toList()..sort();
+      _detection = detection;
       _loading = false;
     });
   }
@@ -132,13 +145,12 @@ class _CalibImagesScreenState extends State<CalibImagesScreen> {
     final ok = await _appState.deleteCalibPair(frameIndex);
     if (!mounted) return;
     if (ok) {
-      // Remove frame from local state and purge cache
       setState(() {
         _pairIndices.remove(frameIndex);
         for (final deviceId in _framesByDevice.keys) {
-          _framesByDevice[deviceId]
-              ?.removeWhere((f) => f.index == frameIndex);
+          _framesByDevice[deviceId]?.removeWhere((f) => f.index == frameIndex);
           _cache.remove('$deviceId/$frameIndex');
+          _detection?[deviceId]?.remove(frameIndex);
         }
       });
     }
@@ -187,6 +199,13 @@ class _CalibImagesScreenState extends State<CalibImagesScreen> {
                   itemCount: _pairIndices.length,
                   itemBuilder: (context, i) {
                     final idx = _pairIndices[i];
+                    // Build per-device detected map for this frame index.
+                    final pairDetection = _detection == null
+                        ? null
+                        : {
+                            for (final e in _detection!.entries)
+                              e.key: e.value[idx] ?? false,
+                          };
                     return _PairRow(
                       frameIndex: idx,
                       cameras: cameras,
@@ -194,6 +213,7 @@ class _CalibImagesScreenState extends State<CalibImagesScreen> {
                       isLeader: state.isLeader,
                       onDelete: () => _deletePair(idx),
                       onTap: (cameraIndex) => _showViewer(i, cameraIndex),
+                      detection: pairDetection,
                       cs: cs,
                       tt: tt,
                     );
@@ -210,6 +230,8 @@ class _PairRow extends StatelessWidget {
   final bool isLeader;
   final VoidCallback onDelete;
   final void Function(int cameraIndex) onTap;
+  // device_id → detected; null means detection hasn't loaded yet
+  final Map<String, bool>? detection;
   final ColorScheme cs;
   final TextTheme tt;
 
@@ -220,31 +242,46 @@ class _PairRow extends StatelessWidget {
     required this.isLeader,
     required this.onDelete,
     required this.onTap,
+    required this.detection,
     required this.cs,
     required this.tt,
   });
 
   @override
   Widget build(BuildContext context) {
+    // Determine pair-level status for badge colouring.
+    Color badgeBg;
+    Color badgeFg;
+    if (detection == null) {
+      badgeBg = cs.surfaceContainerHighest;
+      badgeFg = cs.onSurfaceVariant;
+    } else if (detection!.values.every((v) => v)) {
+      badgeBg = AppColors.success.withValues(alpha: 0.15);
+      badgeFg = AppColors.success;
+    } else {
+      badgeBg = cs.errorContainer.withValues(alpha: 0.5);
+      badgeFg = cs.error;
+    }
+
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 4),
       child: Padding(
         padding: const EdgeInsets.all(10),
         child: Row(
           children: [
-            // Frame index badge
+            // Frame index badge — coloured by pair detection status.
             Container(
               width: 36,
               height: 36,
               decoration: BoxDecoration(
-                color: cs.surfaceContainerHighest,
+                color: badgeBg,
                 borderRadius: BorderRadius.circular(6),
               ),
               alignment: Alignment.center,
               child: Text(
                 '#$frameIndex',
                 style: tt.labelSmall?.copyWith(
-                    color: cs.onSurfaceVariant, fontWeight: FontWeight.w600),
+                    color: badgeFg, fontWeight: FontWeight.w600),
               ),
             ),
             const SizedBox(width: 10),
@@ -253,6 +290,7 @@ class _PairRow extends StatelessWidget {
               final ci = entry.key;
               final dev = entry.value;
               final label = ci == 0 ? 'L' : 'R';
+              final detected = detection?[dev.deviceId];
               return Padding(
                 padding: const EdgeInsets.only(right: 6),
                 child: Column(
@@ -260,6 +298,7 @@ class _PairRow extends StatelessWidget {
                     _Thumbnail(
                       future: loadImage(dev.deviceId, frameIndex),
                       size: 72,
+                      detected: detected,
                       onTap: () => onTap(ci),
                     ),
                     const SizedBox(height: 2),
@@ -292,8 +331,15 @@ class _Thumbnail extends StatefulWidget {
   final Future<Uint8List?> future;
   final double size;
   final VoidCallback? onTap;
+  // null = detection not yet loaded; true/false = result
+  final bool? detected;
 
-  const _Thumbnail({required this.future, required this.size, this.onTap});
+  const _Thumbnail({
+    required this.future,
+    required this.size,
+    this.onTap,
+    this.detected,
+  });
 
   @override
   State<_Thumbnail> createState() => _ThumbnailState();
@@ -316,28 +362,56 @@ class _ThumbnailState extends State<_Thumbnail> {
       child: SizedBox(
         width: widget.size,
         height: widget.size,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: FutureBuilder<Uint8List?>(
-            future: _future,
-            builder: (context, snap) {
-              if (snap.connectionState == ConnectionState.waiting) {
-                return Container(
-                  color: cs.surfaceContainerHighest,
-                  child: const Center(
-                      child: CircularProgressIndicator(strokeWidth: 2)),
-                );
-              }
-              if (snap.hasData && snap.data != null) {
-                return Image.memory(snap.data!, fit: BoxFit.cover);
-              }
-              return Container(
-                color: cs.surfaceContainerHighest,
-                child: Icon(Icons.broken_image_outlined,
-                    size: 24, color: cs.onSurfaceVariant),
-              );
-            },
-          ),
+        child: Stack(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: FutureBuilder<Uint8List?>(
+                future: _future,
+                builder: (context, snap) {
+                  if (snap.connectionState == ConnectionState.waiting) {
+                    return Container(
+                      color: cs.surfaceContainerHighest,
+                      child: const Center(
+                          child: CircularProgressIndicator(strokeWidth: 2)),
+                    );
+                  }
+                  if (snap.hasData && snap.data != null) {
+                    return Image.memory(snap.data!,
+                        fit: BoxFit.cover,
+                        width: widget.size,
+                        height: widget.size);
+                  }
+                  return Container(
+                    color: cs.surfaceContainerHighest,
+                    child: Icon(Icons.broken_image_outlined,
+                        size: 24, color: cs.onSurfaceVariant),
+                  );
+                },
+              ),
+            ),
+            // Detection status badge in bottom-right corner.
+            if (widget.detected != null)
+              Positioned(
+                right: 3,
+                bottom: 3,
+                child: Container(
+                  width: 18,
+                  height: 18,
+                  decoration: const BoxDecoration(
+                    color: Colors.black54,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    widget.detected!
+                        ? Icons.check
+                        : Icons.close,
+                    size: 12,
+                    color: widget.detected! ? AppColors.success : cs.error,
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );
