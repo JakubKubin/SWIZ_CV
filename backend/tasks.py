@@ -159,9 +159,11 @@ def _sync_calibrate(session_id: str) -> CalibResult:
     log.info("Kalibracja: %d par klatek (%s / %s)", len(pairs),
              left.device_id, right.device_id)
 
+    debug_dir = session.data_dir / "debug" / "corners"
     stereo = calibrate_stereo(
         [str(p) for p, _ in pairs],
         [str(p) for _, p in pairs],
+        debug_dir=debug_dir,
     )
 
     params_path = str(session.data_dir / "stereo.json")

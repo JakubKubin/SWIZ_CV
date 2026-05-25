@@ -5,7 +5,9 @@
       "Bash(python -m pytest test_calibration.py test_measurement.py -v --tb=*)",
       "Bash(docker cp *)",
       "Bash(dart analyze *)",
-      "Bash(docker compose *)"
+      "Bash(docker compose *)",
+      "Bash(dir \"C:\\\\Users\\\\Kubin\\\\Desktop\\\\SWIZ_CV\\\\data\\\\e380bf56\")",
+      "Bash(python -c ' *)"
     ]
   }
 }

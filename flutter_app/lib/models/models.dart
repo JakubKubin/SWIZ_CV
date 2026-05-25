@@ -66,6 +66,8 @@ class SessionData {
   final double createdAt;
   final bool hasCalibration;
   final bool hasMeasurement;
+  final String? leftDeviceId;
+  final String? rightDeviceId;
 
   const SessionData({
     required this.sessionId,
@@ -74,6 +76,8 @@ class SessionData {
     required this.createdAt,
     this.hasCalibration = false,
     this.hasMeasurement = false,
+    this.leftDeviceId,
+    this.rightDeviceId,
   });
 
   factory SessionData.fromJson(Map<String, dynamic> j) => SessionData(
@@ -85,6 +89,8 @@ class SessionData {
         createdAt: (j['created_at'] as num).toDouble(),
         hasCalibration: j['has_calibration'] as bool? ?? false,
         hasMeasurement: j['has_measurement'] as bool? ?? false,
+        leftDeviceId: j['left_device_id'] as String?,
+        rightDeviceId: j['right_device_id'] as String?,
       );
 
   SessionData copyWithDevices(List<DeviceInfo> devices) => SessionData(
@@ -94,6 +100,8 @@ class SessionData {
         createdAt: createdAt,
         hasCalibration: hasCalibration,
         hasMeasurement: hasMeasurement,
+        leftDeviceId: leftDeviceId,
+        rightDeviceId: rightDeviceId,
       );
 
   bool get isIdle => state == 'IDLE';

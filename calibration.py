@@ -316,6 +316,43 @@ def find_corners(image: np.ndarray) -> Optional[np.ndarray]:
 # Zbieranie punktow - kazdy obraz przetwarzany dokladnie raz
 # ---------------------------------------------------------------------------
 
+def _fix_corner_order(
+    lc: np.ndarray, rc: np.ndarray, is_landscape: bool
+) -> np.ndarray:
+    """Corrects rc corner ordering so corners[i] matches the same physical board
+    corner as lc[i]. Detects horizontal and/or vertical flip by comparing the
+    board's row-direction and column-direction vectors between both cameras.
+    Only the right-camera array is ever modified; lc is the reference.
+    """
+    cols = BOARD_COLS if is_landscape else BOARD_ROWS
+    rows = BOARD_ROWS if is_landscape else BOARD_COLS
+
+    # Direction along row 0 (first -> last corner in the row)
+    row_dir_l = lc[cols - 1, 0] - lc[0, 0]
+    row_dir_r = rc[cols - 1, 0] - rc[0, 0]
+    h_flip = bool(np.dot(row_dir_l, row_dir_r) < 0)
+
+    # Direction from row 0 to row 1 (column direction)
+    col_dir_l = lc[cols, 0] - lc[0, 0]
+    col_dir_r = rc[cols, 0] - rc[0, 0]
+    v_flip = bool(np.dot(col_dir_l, col_dir_r) < 0)
+
+    if not h_flip and not v_flip:
+        return rc
+
+    log.info(
+        "Poprawiono kolejnosc naroznikow prawej kamery: "
+        "h_flip=%s v_flip=%s - obrazy kamer maja rozna orientacje",
+        h_flip, v_flip,
+    )
+    rc_grid = rc.reshape(rows, cols, 1, 2)
+    if h_flip:
+        rc_grid = rc_grid[:, ::-1, :, :]
+    if v_flip:
+        rc_grid = rc_grid[::-1, :, :, :]
+    return rc_grid.reshape(-1, 1, 2)
+
+
 def collect_points(image_paths: list[str]) -> CalibrationData:
     """Wczytuje obrazy i wykrywa narozniki szachownicy dla pojedynczej kamery.
 
@@ -361,7 +398,8 @@ def collect_points(image_paths: list[str]) -> CalibrationData:
 
 
 def collect_stereo_points(
-    left_paths: list[str], right_paths: list[str]
+    left_paths: list[str], right_paths: list[str],
+    debug_dir: "Path | None" = None,
 ) -> StereoCalibrationData:
     """Wykrywa narozniki szachownicy w parach stereo.
 
@@ -401,10 +439,26 @@ def collect_stereo_points(
             # Para jest niekompletna - odrzucamy calosc, nie mozna uzyc czesciowych danych
             log.warning("Brak naroznikow w parze: %s, %s", lp, rp)
             continue
+        is_landscape_img = l_img.shape[1] > l_img.shape[0]
+        rc = _fix_corner_order(lc, rc, is_landscape_img)
         obj_pts.append(objp)
         left_pts.append(lc)
         right_pts.append(rc)
         log.info("OK para: %s | %s", lp, rp)
+
+        if debug_dir is not None:
+            try:
+                debug_dir.mkdir(parents=True, exist_ok=True)
+                pair_idx = len(obj_pts) - 1
+                l_dbg = l_img.copy()
+                r_dbg = r_img.copy()
+                p_size = (BOARD_COLS, BOARD_ROWS) if is_landscape_img else (BOARD_ROWS, BOARD_COLS)
+                cv2.drawChessboardCorners(l_dbg, p_size, lc, True)
+                cv2.drawChessboardCorners(r_dbg, p_size, rc, True)
+                combined = np.hstack([l_dbg, r_dbg])
+                cv2.imwrite(str(debug_dir / f"pair_{pair_idx:04d}.png"), combined)
+            except Exception as _e:
+                log.debug("Debug corner image save failed: %s", _e)
     log.info("Zgodnych par: %d/%d", len(obj_pts), len(left_paths))
     # Para jest uzyteczna tylko gdy OBIE kamery widza wzorzec - duzo niekompletnych
     # par oznacza zly kadr jednej z kamer lub niezsynchronizowane ujecia.
@@ -437,8 +491,13 @@ def _calibrate_from_data(data: CalibrationData) -> CameraParams:
             f"Za malo obrazow z wykrytym wzorcem ({len(data)}), "
             f"min. {config.MIN_CALIBRATION_IMAGES}"
         )
+    # CALIB_FIX_K3 prevents k1/k2/k3 from fighting each other (overfitting).
+    # Phone cameras have near-zero higher-order distortion; letting k3 float
+    # causes k2 and k3 to take extreme opposite values that cancel on training
+    # data but destroy undistortion maps (valid area shrinks to a tiny oval).
     rms, mtx, dist, _, _ = cv2.calibrateCamera(
-        data.obj_points, data.img_points, data.image_size, np.eye(3), np.zeros(5)
+        data.obj_points, data.img_points, data.image_size, np.eye(3), np.zeros(5),
+        flags=cv2.CALIB_FIX_K3,
     )
     log.info("RMS reproj. error: %.4f px (%d klatek, rozdz. %dx%d)",
              rms, len(data), data.image_size[0], data.image_size[1])
@@ -485,7 +544,8 @@ def baseline_warning(T: np.ndarray, rms: float) -> Optional[str]:
 
 
 def calibrate_stereo(
-    left_paths: list[str], right_paths: list[str]
+    left_paths: list[str], right_paths: list[str],
+    debug_dir: "Path | None" = None,
 ) -> StereoParams:
     """Kalibruje pare stereo i wyznacza wszystkie parametry potrzebne do pomiaru.
 
@@ -509,7 +569,7 @@ def calibrate_stereo(
     if len(left_paths) != len(right_paths):
         raise ValueError("Liczba obrazow lewej i prawej kamery musi byc rowna")
 
-    stereo_data = collect_stereo_points(left_paths, right_paths)
+    stereo_data = collect_stereo_points(left_paths, right_paths, debug_dir=debug_dir)
     if len(stereo_data) < config.MIN_CALIBRATION_IMAGES:
         raise ValueError(
             f"Za malo par z wzorcem ({len(stereo_data)}), "
@@ -539,14 +599,16 @@ def calibrate_stereo(
     if warn:
         log.warning("Jakosc kalibracji stereo: %s", warn)
 
-    # stereoRectify wyznacza macierze R1/R2/P1/P2/Q potrzebne do rektyfikacji
-    # par zdjecien w czasie rzeczywistym. alpha=0 oznacza pelne wypelnienie
-    # obrazu po rektyfikacji (brak czarnych pasow na krawedziach)
+    # stereoRectify wyznacza macierze R1/R2/P1/P2/Q potrzebne do rektyfikacji.
+    # alpha=1 zachowuje pelne pole widzenia obu kamer (bez przycinania), dzieki
+    # czemu ogniskowa w Q pozostaje bliska oryginalnej (~1366 px). alpha=0
+    # przycina do czesci wspolnej i moze zawyzyc ogniskowa 6x, co niszczy
+    # skale glebokosci (dysparycja 128 -> glebia 27 m zamiast ~70 cm).
     R1, R2, P1, P2, Q, _, _ = cv2.stereoRectify(
         left_cam.camera_matrix, left_cam.dist_coeffs,
         right_cam.camera_matrix, right_cam.dist_coeffs,
         stereo_data.image_size, R, T,
-        flags=cv2.CALIB_ZERO_DISPARITY, alpha=0,
+        flags=cv2.CALIB_ZERO_DISPARITY, alpha=1,
     )
 
     return StereoParams(

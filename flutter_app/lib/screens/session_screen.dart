@@ -292,31 +292,68 @@ class _DeviceCard extends StatelessWidget {
     final isOwnDevice = device.deviceId == appState.deviceId;
     final canManage = appState.isLeader && !isOwnDevice;
 
+    final session = appState.session;
+    final isLeftCam = session?.leftDeviceId == device.deviceId;
+    final isRightCam = session?.rightDeviceId == device.deviceId;
+    final cameraRole = isLeftCam ? 'L' : (isRightCam ? 'R' : null);
+
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 4),
       child: ListTile(
-        leading: Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(
-            color: device.isLeader
-                ? AppColors.stateReady.withValues(alpha: 0.12)
-                : cs.surfaceContainerHighest,
-            shape: BoxShape.circle,
-          ),
-          child: Icon(
-            device.isLeader
-                ? Icons.account_circle_outlined
-                : device.isCamera
-                    ? Icons.smartphone_outlined
-                    : Icons.computer_outlined,
-            size: 20,
-            color: device.isLeader ? AppColors.stateReady : cs.onSurfaceVariant,
-          ),
+        leading: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: device.isLeader
+                    ? AppColors.stateReady.withValues(alpha: 0.12)
+                    : cs.surfaceContainerHighest,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                device.isLeader
+                    ? Icons.account_circle_outlined
+                    : device.isCamera
+                        ? Icons.smartphone_outlined
+                        : Icons.computer_outlined,
+                size: 20,
+                color: device.isLeader ? AppColors.stateReady : cs.onSurfaceVariant,
+              ),
+            ),
+            if (cameraRole != null)
+              Positioned(
+                right: -4,
+                bottom: -4,
+                child: Container(
+                  width: 16,
+                  height: 16,
+                  decoration: BoxDecoration(
+                    color: isLeftCam ? cs.primary : cs.tertiary,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Center(
+                    child: Text(
+                      cameraRole,
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.bold,
+                        color: isLeftCam ? cs.onPrimary : cs.onTertiary,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
         ),
         title: Text(device.deviceId, style: tt.bodyMedium),
         subtitle: Text(
-          '${device.mac}${device.isLeader ? '  ·  lider' : ''}${!device.isCamera ? '  ·  admin' : ''}',
+          '${device.mac}'
+          '${device.isLeader ? '  ·  lider' : ''}'
+          '${!device.isCamera ? '  ·  admin' : ''}'
+          '${isLeftCam ? '  ·  lewa kamera' : ''}'
+          '${isRightCam ? '  ·  prawa kamera' : ''}',
           style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
         ),
         trailing: Row(
@@ -387,8 +424,35 @@ class _DeviceMenu extends StatelessWidget {
     }
   }
 
+  Future<void> _assignCamera(BuildContext context, bool asLeft) async {
+    final session = appState.session;
+    if (session == null) return;
+    // Find the other camera device to fill the opposite role.
+    final otherCams = session.devices
+        .where((d) => d.isCamera && d.deviceId != device.deviceId)
+        .toList();
+    if (otherCams.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Potrzeba drugiego urządzenia z kamerą'),
+        ));
+      }
+      return;
+    }
+    // If there's exactly one other camera, assign automatically.
+    // Otherwise let the user see current roles and just swap.
+    final otherCam = otherCams.first;
+    final leftId = asLeft ? device.deviceId : otherCam.deviceId;
+    final rightId = asLeft ? otherCam.deviceId : device.deviceId;
+    await appState.assignCameras(leftId, rightId);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final session = appState.session;
+    final isLeftCam = session?.leftDeviceId == device.deviceId;
+    final isRightCam = session?.rightDeviceId == device.deviceId;
+
     return PopupMenuButton<String>(
       icon: Icon(Icons.more_vert, size: 18, color: cs.onSurfaceVariant),
       onSelected: (action) async {
@@ -399,6 +463,10 @@ class _DeviceMenu extends StatelessWidget {
             await appState.toggleDeviceCamera(device.deviceId, isCamera: true);
           case 'camera_off':
             await appState.toggleDeviceCamera(device.deviceId, isCamera: false);
+          case 'set_left':
+            if (context.mounted) await _assignCamera(context, true);
+          case 'set_right':
+            if (context.mounted) await _assignCamera(context, false);
           case 'remove':
             if (context.mounted) await _confirmRemove(context);
         }
@@ -410,6 +478,26 @@ class _DeviceMenu extends StatelessWidget {
             child: ListTile(
               leading: Icon(Icons.star_outline),
               title: Text('Mianuj liderem'),
+              contentPadding: EdgeInsets.zero,
+              visualDensity: VisualDensity.compact,
+            ),
+          ),
+        if (device.isCamera && !isLeftCam)
+          const PopupMenuItem(
+            value: 'set_left',
+            child: ListTile(
+              leading: Icon(Icons.camera_front_outlined),
+              title: Text('Ustaw jako lewą kamerę'),
+              contentPadding: EdgeInsets.zero,
+              visualDensity: VisualDensity.compact,
+            ),
+          ),
+        if (device.isCamera && !isRightCam)
+          const PopupMenuItem(
+            value: 'set_right',
+            child: ListTile(
+              leading: Icon(Icons.camera_rear_outlined),
+              title: Text('Ustaw jako prawą kamerę'),
               contentPadding: EdgeInsets.zero,
               visualDensity: VisualDensity.compact,
             ),

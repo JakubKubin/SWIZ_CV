@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 
 import '../models/models.dart';
 import '../providers/app_state.dart';
+import '../services/api_service.dart';
+import '../theme/app_theme.dart';
 import 'session_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -20,6 +22,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _busy = false;
   bool? _connectionOk;
   bool _isCamera = true;
+  List<SessionData> _adminSessions = [];
 
   @override
   void initState() {
@@ -188,7 +191,24 @@ class _HomeScreenState extends State<HomeScreen> {
 
                       state.serverUrl = _serverCtrl.text.trim();
                       final ok = await state.testConnection();
-                      setState(() => _connectionOk = ok);
+
+                      List<SessionData> adminSessions = [];
+                      if (ok) {
+                        try {
+                          final all = await ApiService(state.serverUrl).listSessions();
+                          adminSessions = all
+                              .where((s) => s.devices.any(
+                                    (d) => (!d.isCamera || d.isLeader) && d.wsConnected,
+                                  ))
+                              .toList()
+                            ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+                        } catch (_) {}
+                      }
+
+                      setState(() {
+                        _connectionOk = ok;
+                        _adminSessions = adminSessions;
+                      });
 
                       messenger.showSnackBar(SnackBar(
                         content: Text(ok
@@ -251,6 +271,25 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
+            if (_adminSessions.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _Section(
+                title: 'Aktywne sesje na serwerze',
+                child: Column(
+                  children: [
+                    for (final s in _adminSessions)
+                      _AdminSessionTile(
+                        session: s,
+                        busy: _busy,
+                        onJoin: () {
+                          _sidCtrl.text = s.sessionId;
+                          _joinExisting(state);
+                        },
+                      ),
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: 12),
             _Section(
               title: 'Nowa sesja',
@@ -425,6 +464,52 @@ class _KnownSessionTile extends StatelessWidget {
             tooltip: 'Usuń sesję',
             icon: Icon(Icons.delete_outline, size: 20, color: cs.error),
             onPressed: busy ? null : onDelete,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AdminSessionTile extends StatelessWidget {
+  final SessionData session;
+  final bool busy;
+  final VoidCallback onJoin;
+
+  const _AdminSessionTile({
+    required this.session,
+    required this.busy,
+    required this.onJoin,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final tt = Theme.of(context).textTheme;
+    final adminDevice = session.devices.firstWhere((d) => !d.isCamera);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(Icons.computer_outlined, size: 20, color: cs.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(session.sessionId,
+                    style: tt.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+                Text(
+                  '${stateLabel(session.state)}  ·  admin: ${adminDevice.deviceId}',
+                  style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+          TextButton.icon(
+            onPressed: busy ? null : onJoin,
+            icon: const Icon(Icons.login_outlined, size: 18),
+            label: const Text('Dołącz'),
           ),
         ],
       ),

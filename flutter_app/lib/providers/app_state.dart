@@ -766,6 +766,22 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  Future<bool> assignCameras(String leftDeviceId, String rightDeviceId) async {
+    if (sessionId == null || deviceId.isEmpty) return false;
+    try {
+      final updated = await _api.assignCameras(
+        sessionId!, leftDeviceId, rightDeviceId, deviceId,
+      );
+      session = updated;
+      notifyListeners();
+      return true;
+    } catch (e, st) {
+      _log.warn('Przypisanie kamer nie powiodło się', e, st);
+      _setError(e.toString());
+      return false;
+    }
+  }
+
   Future<bool> deleteCalibPair(int frameIndex) async {
     if (sessionId == null || deviceId.isEmpty) return false;
     try {

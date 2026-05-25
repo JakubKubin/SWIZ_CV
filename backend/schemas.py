@@ -36,6 +36,8 @@ class SessionOut(BaseModel):
     created_at: float
     has_calibration: bool = False  # czy sesja ma zapisane parametry kalibracji
     has_measurement: bool = False  # czy sesja ma zapisany wynik pomiaru
+    left_device_id: Optional[str] = None   # override: kto jest lewa kamera
+    right_device_id: Optional[str] = None  # override: kto jest prawa kamera
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +89,11 @@ class MeasurementOut(BaseModel):
 
 class DevicePatchRequest(BaseModel):
     is_camera: bool = Field(..., description="True = urządzenie z kamerą; False = tylko admin")
+
+
+class CameraAssignRequest(BaseModel):
+    left_device_id: str = Field(..., description="ID urządzenia przypisanego jako lewa kamera")
+    right_device_id: str = Field(..., description="ID urządzenia przypisanego jako prawa kamera")
 
 
 # ---------------------------------------------------------------------------

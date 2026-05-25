@@ -174,6 +174,25 @@ class ApiService {
     return SessionData.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
   }
 
+  Future<SessionData> assignCameras(
+    String sid,
+    String leftDeviceId,
+    String rightDeviceId,
+    String requesterId,
+  ) async {
+    final r = await http.put(
+      _uri('/sessions/$sid/cameras'
+          '?requester_id=${Uri.encodeComponent(requesterId)}'),
+      headers: _jsonHeaders(),
+      body: jsonEncode({
+        'left_device_id': leftDeviceId,
+        'right_device_id': rightDeviceId,
+      }),
+    );
+    await _checkStatus(r);
+    return SessionData.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
   Future<List<SessionData>> listSessions() async {
     final r = await http.get(_uri('/sessions'), headers: _baseHeaders);
     await _checkStatus(r);

@@ -51,7 +51,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from .schemas import (
     JoinRequest, SessionOut, DeviceOut,
     CalibStatusOut, TriggerRequest, TriggerOut,
-    MeasurementOut, HealthOut, DevicePatchRequest,
+    MeasurementOut, HealthOut, DevicePatchRequest, CameraAssignRequest,
 )
 from .session import store, SessionState
 from .tasks import ws_manager, calibrate_session, measure_session, synthetic_measure
@@ -125,6 +125,8 @@ def _detect_corners_in_file(path) -> bool:
 
 def _session_to_out(session) -> SessionOut:
     """Konwertuje obiekt Session na Pydantic SessionOut."""
+    left = session.left_camera()
+    right = session.right_camera()
     return SessionOut(
         session_id=session.session_id,
         state=session.state,
@@ -144,6 +146,8 @@ def _session_to_out(session) -> SessionOut:
         created_at=session.created_at,
         has_calibration=session.calib_result is not None,
         has_measurement=session.meas_result is not None,
+        left_device_id=left.device_id if left else None,
+        right_device_id=right.device_id if right else None,
     )
 
 
@@ -382,6 +386,51 @@ async def patch_device(
         "event": "device_updated",
         "device_id": device_id,
         "is_camera": body.is_camera,
+    })
+
+    return _session_to_out(session)
+
+
+@app.put("/sessions/{session_id}/cameras", response_model=SessionOut, tags=["Sesje"])
+async def assign_cameras(
+    session_id: str,
+    body: CameraAssignRequest,
+    requester_id: str = Query(..., description="ID lidera autoryzującego operację"),
+):
+    """Ręcznie przypisuje urządzenia do roli lewej i prawej kamery stereo.
+
+    Tylko lider może wywołać ten endpoint. Przypisanie jest zapisywane w sesji
+    i nadpisuje domyślny podział (lider=lewa, follower=prawa).
+    Wymagana jest ponowna kalibracja po zmianie.
+    """
+    session = await _get_or_404(session_id)
+
+    requester = session.devices.get(requester_id)
+    if requester is None:
+        raise HTTPException(status_code=404, detail=f"Requester '{requester_id}' nie jest w sesji")
+    if not requester.is_leader:
+        raise HTTPException(status_code=403, detail="Tylko lider może przypisywać kamery")
+
+    for did, role in [(body.left_device_id, "lewa"), (body.right_device_id, "prawa")]:
+        dev = session.devices.get(did)
+        if dev is None:
+            raise HTTPException(status_code=404, detail=f"Urządzenie '{did}' nie jest w sesji")
+        if not dev.is_camera:
+            raise HTTPException(status_code=422, detail=f"Urządzenie '{did}' nie jest kamerą ({role})")
+
+    if body.left_device_id == body.right_device_id:
+        raise HTTPException(status_code=422, detail="Lewa i prawa kamera muszą być różnymi urządzeniami")
+
+    session.left_device_id = body.left_device_id
+    session.right_device_id = body.right_device_id
+    await store.save(session_id)
+
+    log.info("[%s] Kamery przypisane: lewa=%s prawa=%s (przez: %s)",
+             session_id, body.left_device_id, body.right_device_id, requester_id)
+    await ws_manager.broadcast(session_id, {
+        "event": "cameras_assigned",
+        "left_device_id": body.left_device_id,
+        "right_device_id": body.right_device_id,
     })
 
     return _session_to_out(session)
