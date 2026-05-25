@@ -1,0 +1,79 @@
+{
+  "session_id": "9683bc4a",
+  "state": "READY",
+  "created_at": 1779705953.1985018,
+  "devices": {
+    "pc": {
+      "device_id": "pc",
+      "mac": "AF:D2:A1:73:98:0D",
+      "is_leader": true,
+      "is_camera": false,
+      "joined_at": 1779705953.370494,
+      "ws_connected": true,
+      "calib_frame_count": 0,
+      "capture_frame_count": 0
+    },
+    "device_2927": {
+      "device_id": "device_2927",
+      "mac": "D0:6F:FD:52:54:1A",
+      "is_leader": false,
+      "is_camera": true,
+      "joined_at": 1779705961.2418876,
+      "ws_connected": true,
+      "calib_frame_count": 5,
+      "capture_frame_count": 1
+    },
+    "device_2112": {
+      "device_id": "device_2112",
+      "mac": "E6:09:14:C6:98:00",
+      "is_leader": false,
+      "is_camera": true,
+      "joined_at": 1779705963.838684,
+      "ws_connected": true,
+      "calib_frame_count": 5,
+      "capture_frame_count": 1
+    }
+  },
+  "calib_result": {
+    "reproj_error": 0.7433959796021091,
+    "params_path": "data/9683bc4a/stereo.json",
+    "rms_left": 0.6462175117703601,
+    "rms_right": 0.532418924955222,
+    "warning": "baza stereo nie jest pozioma: T=[-363, 37, 90] mm (oczekiwane ~[375, 0, 0]) - sprawdz ustawienie telefonow",
+    "computed_at": 1779706501.0669448
+  },
+  "meas_result": {
+    "width_mm": 864.5370970479917,
+    "length_mm": 647.0741020944224,
+    "height_mm": 865.3201266394826,
+    "volume_voxel_mm3": 18486696.306797408,
+    "volume_bbox_mm3": 484077009.52235556,
+    "volume_hull_mm3": 127535065.32848594,
+    "fill_ratio": 0.0381895771605399,
+    "validation_passed": true,
+    "pallet_rms_mm": 3.3239455223083496,
+    "n_object_pts": 12906,
+    "n_pallet_inliers": 23481,
+    "issues": [],
+    "report": "\n============================================================\n  RAPORT POMIARU OBIEKTU NA EUROPALECIE\n============================================================\n  Data/czas: 2026-05-25 10:57:04\n\n--- Detekcja plaszczyzny palety ---\n  RMS residual:       3.32 mm\n  Inliery RANSAC:     23481\n  Pokrycie palety:    87.9 %\n\n--- Wymiary obiektu (bounding box 3D) ---\n  Szerokosc (X):    864.5 mm\n  Dlugosc   (Y):    647.1 mm\n  Wysokosc  (Z):    865.3 mm\n  Liczba pkt.:   12906\n\n--- Objetosc obiektu ---\n  Voxel-column:      18486696 mm^3 =  18.49 l  (komorka 10 mm, 525 kom.)\n  Bounding box:     484077010 mm^3 = 484.08 l\n  Convex hull:      127535065 mm^3 = 127.54 l\n  Wsk. pelnosci: 3.8 % (voxel / bbox)\n\n--- Walidacja ---\n  Status: PASS\n  Brak problemow - pomiar prawidlowy\n============================================================",
+    "measured_at": 1779706624.4490595
+  },
+  "calib_detection": {
+    "device_2927": {
+      "0": true,
+      "1": true,
+      "2": true,
+      "3": true,
+      "4": true
+    },
+    "device_2112": {
+      "0": true,
+      "1": true,
+      "2": true,
+      "3": true,
+      "4": true
+    }
+  },
+  "left_device_id": null,
+  "right_device_id": null
+}

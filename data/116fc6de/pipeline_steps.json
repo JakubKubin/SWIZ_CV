@@ -1,0 +1,43 @@
+{
+  "input": {
+    "left_file": "capture_0000.png",
+    "right_file": "capture_0000.png",
+    "calibration_reproj_error_px": 1.0608074273883739
+  },
+  "rectification": {
+    "image_size": [
+      1920,
+      1080
+    ]
+  },
+  "disparity": {
+    "valid_px": 284623,
+    "total_px": 2073600,
+    "coverage_pct": 13.7
+  },
+  "depth": {
+    "valid_px": 284623,
+    "median_mm": 1048.9
+  },
+  "pointcloud": {
+    "n_pts_raw": 284623,
+    "n_pts_filtered": 284623
+  },
+  "pallet": {
+    "rms_residual_mm": 1.8036768436431885,
+    "n_inliers": 269291,
+    "n_roi_pts": 128036
+  },
+  "measurement": {
+    "n_object_pts": 183,
+    "width_mm": 45.0,
+    "length_mm": 26.9,
+    "height_mm": 192.9,
+    "volume_voxel_l": 0.0979,
+    "volume_bbox_l": 0.2331
+  },
+  "validation": {
+    "passed": true,
+    "issues": []
+  }
+}

@@ -600,15 +600,16 @@ def calibrate_stereo(
         log.warning("Jakosc kalibracji stereo: %s", warn)
 
     # stereoRectify wyznacza macierze R1/R2/P1/P2/Q potrzebne do rektyfikacji.
-    # alpha=1 zachowuje pelne pole widzenia obu kamer (bez przycinania), dzieki
-    # czemu ogniskowa w Q pozostaje bliska oryginalnej (~1366 px). alpha=0
-    # przycina do czesci wspolnej i moze zawyzyc ogniskowa 6x, co niszczy
-    # skale glebokosci (dysparycja 128 -> glebia 27 m zamiast ~70 cm).
+    # alpha=0: przycina wynik do czesci wspolnej obu kamer (zero czarnych pikseli),
+    # ogniskowa bliska oryginalnej. Dziala poprawnie gdy dystorsja jest sensowna
+    # (CALIB_FIX_K3 pilnuje, ze tak jest). alpha=1 przy pochylonych kamerach
+    # potrafi skompresowac ogniskowa 24x (np. 1400->58 px), bo musi objac
+    # pelne FOV obu kamer po duzej rotacji rektyfikacyjnej.
     R1, R2, P1, P2, Q, _, _ = cv2.stereoRectify(
         left_cam.camera_matrix, left_cam.dist_coeffs,
         right_cam.camera_matrix, right_cam.dist_coeffs,
         stereo_data.image_size, R, T,
-        flags=cv2.CALIB_ZERO_DISPARITY, alpha=1,
+        flags=cv2.CALIB_ZERO_DISPARITY, alpha=0,
     )
 
     return StereoParams(

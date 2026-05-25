@@ -1,0 +1,27 @@
+
+============================================================
+  RAPORT POMIARU OBIEKTU NA EUROPALECIE
+============================================================
+  Data/czas: 2026-05-25 10:57:04
+
+--- Detekcja plaszczyzny palety ---
+  RMS residual:       3.32 mm
+  Inliery RANSAC:     23481
+  Pokrycie palety:    87.9 %
+
+--- Wymiary obiektu (bounding box 3D) ---
+  Szerokosc (X):    864.5 mm
+  Dlugosc   (Y):    647.1 mm
+  Wysokosc  (Z):    865.3 mm
+  Liczba pkt.:   12906
+
+--- Objetosc obiektu ---
+  Voxel-column:      18486696 mm^3 =  18.49 l  (komorka 10 mm, 525 kom.)
+  Bounding box:     484077010 mm^3 = 484.08 l
+  Convex hull:      127535065 mm^3 = 127.54 l
+  Wsk. pelnosci: 3.8 % (voxel / bbox)
+
+--- Walidacja ---
+  Status: PASS
+  Brak problemow - pomiar prawidlowy
+============================================================
