@@ -23,6 +23,7 @@ from calibration import calibrate_stereo, save_params, load_params, baseline_war
 from disparity import (
     rectify_pair, compute_disparity, disparity_to_depth,
     colormap_disparity, colormap_depth, draw_epipolar_check,
+    auto_sgbm_cfg,
 )
 from pointcloud import (
     build_pointcloud, filter_pointcloud, save_ply,
@@ -265,7 +266,8 @@ def _sync_measure(session_id: str) -> MeasResult:
                 draw_epipolar_check(left_rect, right_rect))
 
     # Etap 3: mapa dysparycji SGBM
-    disp = compute_disparity(left_rect, right_rect)
+    cfg = auto_sgbm_cfg(stereo, left_rect.shape[1], max_depth_mm=config.MAX_DEPTH_MM, min_depth_mm=config.MIN_DEPTH_MM)
+    disp = compute_disparity(left_rect, right_rect, cfg)
     np.save(str(out / "disparity.npy"), disp)
     cv2.imwrite(str(out / "disparity_color.png"), colormap_disparity(disp))
 

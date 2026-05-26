@@ -55,7 +55,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
         (c) => c.lensDirection == CameraLensDirection.back,
         orElse: () => cameras.first,
       );
-      final ctrl = CameraController(back, ResolutionPreset.veryHigh, enableAudio: false);
+      final ctrl = CameraController(back, ResolutionPreset.max, enableAudio: false);
       await ctrl.initialize();
       if (!mounted) {
         await ctrl.dispose();
@@ -79,6 +79,12 @@ class _CaptureScreenState extends State<CaptureScreen> {
 
   void _onStateChange() {
     if (_appState.isCamera && _appState.captureTriggerAt != null) {
+      if (mounted) {
+        final myRoute = ModalRoute.of(context);
+        if (myRoute != null && !myRoute.isCurrent) {
+          Navigator.of(context).popUntil((r) => r == myRoute);
+        }
+      }
       _startCountdown();
     }
   }

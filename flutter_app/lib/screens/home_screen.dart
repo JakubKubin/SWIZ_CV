@@ -31,6 +31,30 @@ class _HomeScreenState extends State<HomeScreen> {
     _serverCtrl.text = s.serverUrl;
     _deviceCtrl.text = s.deviceId;
     _macCtrl.text = s.mac;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkConnection(s));
+  }
+
+  Future<void> _checkConnection(AppState s) async {
+    s.serverUrl = _serverCtrl.text.trim();
+    final ok = await s.testConnection();
+    List<SessionData> adminSessions = [];
+    if (ok) {
+      try {
+        final all = await ApiService(s.serverUrl).listSessions();
+        adminSessions = all
+            .where((sess) => sess.devices.any(
+                  (d) => (!d.isCamera || d.isLeader) && d.wsConnected,
+                ))
+            .toList()
+          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      } catch (_) {}
+    }
+    if (mounted) {
+      setState(() {
+        _connectionOk = ok;
+        _adminSessions = adminSessions;
+      });
+    }
   }
 
   @override
@@ -188,33 +212,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   ? null
                   : () async {
                       final messenger = ScaffoldMessenger.of(context);
-
-                      state.serverUrl = _serverCtrl.text.trim();
-                      final ok = await state.testConnection();
-
-                      List<SessionData> adminSessions = [];
-                      if (ok) {
-                        try {
-                          final all = await ApiService(state.serverUrl).listSessions();
-                          adminSessions = all
-                              .where((s) => s.devices.any(
-                                    (d) => (!d.isCamera || d.isLeader) && d.wsConnected,
-                                  ))
-                              .toList()
-                            ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-                        } catch (_) {}
-                      }
-
-                      setState(() {
-                        _connectionOk = ok;
-                        _adminSessions = adminSessions;
-                      });
-
+                      await _checkConnection(state);
+                      if (!context.mounted) return;
                       messenger.showSnackBar(SnackBar(
-                        content: Text(ok
+                        content: Text(_connectionOk == true
                             ? 'Serwer dostępny'
                             : 'Brak połączenia z serwerem'),
-                        backgroundColor: ok ? null : cs.error,
+                        backgroundColor: _connectionOk == true ? null : cs.error,
                       ));
                     },
             );

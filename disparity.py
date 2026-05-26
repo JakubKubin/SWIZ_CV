@@ -55,7 +55,101 @@ class SGBMConfig:
     uniqueness: int = 10
     speckle_window: int = 100
     speckle_range: int = 2
-    mode: int = cv2.STEREO_SGBM_MODE_SGBM_3WAY
+    mode: int = cv2.STEREO_SGBM_MODE_SGBM
+
+
+def auto_sgbm_cfg(
+    stereo: "StereoParams",
+    img_w: int,
+    max_depth_mm: float = 5000.0,
+    min_depth_mm: float = 800.0,
+) -> "SGBMConfig":
+    """Compute SGBM min_disparity + num_disparities from calibration geometry.
+
+    SGBM only produces valid output for columns x >= min_disp + num_disp.
+    This function sets:
+      min_disp = disparity at max_depth_mm  (ignore far background)
+      num_disp = covers down to min_depth_mm (ensure near objects are matched),
+                 capped at img_w so we don't exceed image width.
+
+    Formula: d = f * B / Z
+      f = P1[0,0]            (rectified focal length, px)
+      B = |P2[0,3]| / f      (horizontal baseline, mm)
+    """
+    f = float(abs(stereo.P1[0, 0]))
+    tx = float(abs(stereo.P2[0, 3]))
+    if f < 1.0 or tx < 1.0:
+        log.warning("auto_sgbm_cfg: P1/P2 nie wygladaja na poprawne - uzywam domyslnego SGBMConfig")
+        return SGBMConfig()
+
+    # Sanity-check rectified focal length against individual camera focal lengths.
+    # stereoRectify can return absurd values (10-100x too large) when the stereo
+    # calibration is poor (high RMS, bad checkerboard coverage). When detected,
+    # fall back to the average of individual camera focal lengths and estimate
+    # the baseline directly from |T| — this gives reasonable SGBM parameters
+    # even with a bad calibration, though measurement accuracy will still be limited.
+    f_left = float(abs(stereo.left.camera_matrix[0, 0]))
+    f_right = float(abs(stereo.right.camera_matrix[0, 0]))
+    f_raw_avg = (f_left + f_right) / 2.0
+    if f > f_raw_avg * 3.0:
+        log.warning(
+            "auto_sgbm_cfg: P1[0,0]=%.0f px jest %.1fx wieksza niz ogniskowe kamer "
+            "(lewa=%.0f, prawa=%.0f px) — stereoRectify zwrocil bledne parametry "
+            "(stereo RMS=%.2f px). Uzywam sredniej ogniskowej kamer (%.0f px) "
+            "i normy |T| jako bazy; pomiar bedzie niedokladny do czasu rekalibracji.",
+            f, f / f_raw_avg, f_left, f_right, stereo.reproj_error, f_raw_avg,
+        )
+        f = f_raw_avg
+        B_phys = float(np.linalg.norm(stereo.T))  # physical baseline magnitude [mm]
+        tx = f * B_phys
+
+    B = tx / f  # baseline in mm
+
+    # Minimum detectable distance = closest object whose full disparity fits in img_w
+    min_detectable_mm = f * B / img_w
+    if min_detectable_mm > 1500.0:
+        log.warning(
+            "auto_sgbm_cfg: minimalna wykrywalna odleglosc = %.0f mm "
+            "(f=%.0f px, B=%.0f mm, szerokosc=%d px) - "
+            "baza stereo jest za duza dla tej odleglosci; "
+            "zmniejsz baze do ~%.0f mm lub odsun kamery od obiektu",
+            min_detectable_mm, f, B, img_w,
+            img_w * 1000.0 / f,
+        )
+
+    # min_disparity: background objects at max_depth (floor to 16-multiple)
+    d_far = max(0, int(f * B / max_depth_mm))
+    min_disp = (d_far // 16) * 16
+
+    # num_disparities: cover from max_depth down to min_depth.
+    # d_near may exceed img_w for large baselines — cap at img_w so we at least
+    # match whatever is physically visible in both images.
+    d_near = int(f * B / min_depth_mm)
+    d_near_capped = min(d_near, img_w)
+    num_disp = max(16, ((d_near_capped - min_disp + 15) // 16) * 16)
+
+    valid_start = min_disp + num_disp
+    coverage_pct = 100.0 * max(0, img_w - valid_start) / img_w
+
+    if coverage_pct < 20.0:
+        log.warning(
+            "auto_sgbm_cfg: pokrycie dysparycji tylko %.0f%% przy odleglosci %.0f mm "
+            "(valid x>=%d z %d px szerokosci) - zmniejsz baze z %.0f mm do ~%.0f mm "
+            "aby uzyskac >50%% pokrycia",
+            coverage_pct, min_depth_mm, valid_start, img_w,
+            B, img_w * min_depth_mm / (2 * f),
+        )
+
+    cfg = SGBMConfig()
+    cfg.min_disparity = min_disp
+    cfg.num_disparities = num_disp
+    log.info(
+        "auto_sgbm_cfg: f=%.0fpx B=%.0fmm -> min_disp=%d num_disp=%d "
+        "(valid x>=%d, pokrycie ~%.0f%% przy min_depth=%.0fmm)",
+        f, B, min_disp, num_disp,
+        valid_start, coverage_pct, min_depth_mm,
+    )
+    return cfg
 
 
 # ---------------------------------------------------------------------------
@@ -138,8 +232,20 @@ def compute_disparity(
     if cfg is None:
         cfg = SGBMConfig()
 
+    img_w = left_rect.shape[1]
+
+    # OpenCV wymaga: width > minDisparity + numDisparities + blockSize/2.
+    # Jesli num_disparities jest za duze dla szerokosci obrazu, zmniejszamy je
+    # do najblizszej wielokrotnosci 16 spelniajace ten warunek.
+    max_safe_num_disp = ((img_w - cfg.min_disparity - cfg.block_size // 2 - 1) // 16) * 16
+    num_disp = min(cfg.num_disparities, max(16, max_safe_num_disp))
+    if num_disp != cfg.num_disparities:
+        log.warning("SGBM: num_disparities %d zbyt duze dla szerokosci obrazu %d px "
+                    "- zmniejszono do %d (max bezpieczne)",
+                    cfg.num_disparities, img_w, num_disp)
+
     log.debug("SGBM cfg: num_disp=%d block=%d uniq=%d speckle_win=%d mode=%d",
-              cfg.num_disparities, cfg.block_size, cfg.uniqueness, cfg.speckle_window, cfg.mode)
+              num_disp, cfg.block_size, cfg.uniqueness, cfg.speckle_window, cfg.mode)
 
     # SGBM wymaga identycznych rozmiarow obrazow - rozne rozmiary daja smieciowa
     # dysparycje lub blad OpenCV. Ostrzegamy, bo to typowy efekt zlej rektyfikacji.
@@ -154,7 +260,7 @@ def compute_disparity(
 
     matcher = cv2.StereoSGBM_create( # type: ignore
         minDisparity=cfg.min_disparity,
-        numDisparities=cfg.num_disparities,
+        numDisparities=num_disp,
         blockSize=cfg.block_size,
         P1=cfg.p1,
         P2=cfg.p2,
@@ -172,7 +278,7 @@ def compute_disparity(
 
     # Piksele z dysparycja <= 0 oznaczaja brak dopasowania po stronie lewej
     # lub prawej - zerujemy je, aby nie powodowaly bledow przy konwersji do glebokosci
-    invalid = (disp_float <= 0) | (disp_float >= cfg.num_disparities)
+    invalid = (disp_float <= 0) | (disp_float >= num_disp)
     disp_float[invalid] = 0.0
 
     valid_px = int((disp_float > 0).sum())
@@ -190,10 +296,10 @@ def compute_disparity(
                     "zla rektyfikacja; chmura punktow bedzie rzadka", coverage)
     # Wartosci blisko gornego progu sugeruja, ze obiekty sa blizej niz zaklada
     # num_disparities - czesc dysparycji moze byc obcieta (utrata bliskich punktow).
-    if valid_px and float(disp_float.max()) >= cfg.num_disparities - 1:
+    if valid_px and float(disp_float.max()) >= num_disp - 1:
         log.warning("Dysparycja: max=%.1f px blisko limitu num_disparities=%d - "
                     "bliskie obiekty moga byc obciete, rozwaz wieksze num_disparities",
-                    float(disp_float.max()), cfg.num_disparities)
+                    float(disp_float.max()), num_disp)
     return disp_float
 
 

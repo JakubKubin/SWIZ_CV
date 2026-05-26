@@ -347,7 +347,25 @@ class _DeviceCard extends StatelessWidget {
               ),
           ],
         ),
-        title: Text(device.deviceId, style: tt.bodyMedium),
+        title: Row(
+          children: [
+            Flexible(child: Text(device.deviceId, style: tt.bodyMedium)),
+            if (isOwnDevice) ...[
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: cs.primaryContainer,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  'to urządzenie',
+                  style: tt.labelSmall?.copyWith(color: cs.onPrimaryContainer),
+                ),
+              ),
+            ],
+          ],
+        ),
         subtitle: Text(
           '${device.mac}'
           '${device.isLeader ? '  ·  lider' : ''}'

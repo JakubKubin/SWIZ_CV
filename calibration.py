@@ -612,6 +612,19 @@ def calibrate_stereo(
         flags=cv2.CALIB_ZERO_DISPARITY, alpha=0,
     )
 
+    # Sanity check: rectified focal length should be comparable to input camera focal lengths.
+    # If it's >3x the average, stereoRectify received bad input (high RMS, few/poor images).
+    f_avg = (left_cam.camera_matrix[0, 0] + right_cam.camera_matrix[0, 0]) / 2.0
+    f_rect = float(P1[0, 0])
+    if f_rect > f_avg * 3.0:
+        log.warning(
+            "stereoRectify zwrocil ogniskowa %.0f px (%.1fx wieksza niz srednia kamer %.0f px) — "
+            "kalibracja stereo jest bledna. Przyczyny: zbyt malo par kalibracyjnych (%d), "
+            "zle oswietlenie/ostrosc, lub telefony za bardzo pochylone. "
+            "Dodaj wiecej par (>=10) z roznych katow i odleglosci szachownicy.",
+            f_rect, f_rect / f_avg, f_avg, len(stereo_data),
+        )
+
     return StereoParams(
         left=left_cam, right=right_cam,
         R=R, T=T, E=E, F=F, reproj_error=rms,

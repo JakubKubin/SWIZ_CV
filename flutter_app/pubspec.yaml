@@ -29,6 +29,9 @@ dependencies:
   # Trwałe przechowywanie ustawień (URL serwera, ID urządzenia, MAC)
   shared_preferences: ^2.3.0
 
+  # Device name for human-readable default device ID
+  device_info_plus: ^10.0.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

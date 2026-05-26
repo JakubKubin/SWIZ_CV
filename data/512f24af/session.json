@@ -1,0 +1,77 @@
+{
+  "session_id": "512f24af",
+  "state": "DONE",
+  "created_at": 1779788902.8745933,
+  "devices": {
+    "pc": {
+      "device_id": "pc",
+      "mac": "D7:AB:A5:3F:2A:E5",
+      "is_leader": true,
+      "is_camera": false,
+      "joined_at": 1779788903.0344422,
+      "ws_connected": true,
+      "calib_frame_count": 0,
+      "capture_frame_count": 0
+    },
+    "sm_s918b": {
+      "device_id": "sm_s918b",
+      "mac": "0B:15:CE:22:80:1B",
+      "is_leader": false,
+      "is_camera": true,
+      "joined_at": 1779788907.6076038,
+      "ws_connected": true,
+      "calib_frame_count": 4,
+      "capture_frame_count": 1
+    },
+    "sm_s24": {
+      "device_id": "sm_s24",
+      "mac": "E6:09:14:C6:98:00",
+      "is_leader": false,
+      "is_camera": true,
+      "joined_at": 1779788919.887428,
+      "ws_connected": true,
+      "calib_frame_count": 4,
+      "capture_frame_count": 1
+    }
+  },
+  "calib_result": {
+    "reproj_error": 3.010806869649366,
+    "params_path": "data/512f24af/stereo.json",
+    "rms_left": 1.3982411339440244,
+    "rms_right": 1.2078977855389283,
+    "warning": "baza stereo nie jest pozioma: T=[-417, -94, 204] mm (oczekiwane ~[474, 0, 0]) - sprawdz ustawienie telefonow; stereo RMS=3.01 px > prog 2.0 px - telefony mogly poruszyc sie miedzy klatkami lub potrzeba wiecej par",
+    "computed_at": 1779789099.7920141
+  },
+  "meas_result": {
+    "width_mm": 351.4469487093705,
+    "length_mm": 289.73618664012236,
+    "height_mm": 1892.245067461255,
+    "volume_voxel_mm3": 5045501.708997246,
+    "volume_bbox_mm3": 192681446.8479386,
+    "volume_hull_mm3": 78886144.3331441,
+    "fill_ratio": 0.026185716328874585,
+    "validation_passed": true,
+    "pallet_rms_mm": 5.156678199768066,
+    "n_object_pts": 10333,
+    "n_pallet_inliers": 7570,
+    "issues": [],
+    "report": "\n============================================================\n  RAPORT POMIARU OBIEKTU NA EUROPALECIE\n============================================================\n  Data/czas: 2026-05-26 09:53:02\n\n--- Detekcja plaszczyzny palety ---\n  RMS residual:       5.16 mm\n  Inliery RANSAC:     7570\n  Pokrycie palety:    304.6 %\n\n--- Wymiary obiektu (bounding box 3D) ---\n  Szerokosc (X):    351.4 mm\n  Dlugosc   (Y):    289.7 mm\n  Wysokosc  (Z):   1892.2 mm\n  Liczba pkt.:   10333\n\n--- Objetosc obiektu ---\n  Voxel-column:       5045502 mm^3 =   5.05 l  (komorka 10 mm, 296 kom.)\n  Bounding box:     192681447 mm^3 = 192.68 l\n  Convex hull:       78886144 mm^3 =  78.89 l\n  Wsk. pelnosci: 2.6 % (voxel / bbox)\n\n--- Walidacja ---\n  Status: PASS\n  Brak problemow - pomiar prawidlowy\n============================================================",
+    "measured_at": 1779789182.8697462
+  },
+  "calib_detection": {
+    "sm_s24": {
+      "0": true,
+      "1": true,
+      "2": true,
+      "3": true
+    },
+    "sm_s918b": {
+      "0": true,
+      "1": true,
+      "2": true,
+      "3": true
+    }
+  },
+  "left_device_id": null,
+  "right_device_id": null
+}

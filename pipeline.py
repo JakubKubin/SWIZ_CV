@@ -51,9 +51,66 @@ from pointcloud import (
 from pallet import detect_pallet
 from measurement import measure_object, validate_measurement, generate_report
 from logging_setup import setup_logging
+import config
 
 setup_logging()
 log = logging.getLogger(__name__)
+
+
+def _save_pallet_debug(path, pallet_result, meas, noise_floor_mm):
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import matplotlib.patches as patches
+    except ImportError:
+        log.warning("matplotlib niedostepny — pominięto pallet_debug.png")
+        return
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    xyz_p = pallet_result.xyz_pallet
+    roi_mask = pallet_result.roi_mask
+    inlier_mask = pallet_result.plane.inlier_mask
+    xyz_roi = xyz_p[roi_mask]
+    xyz_inliers = xyz_p[inlier_mask]
+    xyz_obj = meas.object_pts
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+
+    if len(xyz_roi):
+        ax1.scatter(xyz_roi[:, 0], xyz_roi[:, 1], s=0.3, c="lightgray", label="ROI")
+    ax1.scatter(xyz_inliers[:, 0], xyz_inliers[:, 1], s=0.5, c="green",
+                alpha=0.5, label="Paleta (inlierzy)")
+    if len(xyz_obj):
+        ax1.scatter(xyz_obj[:, 0], xyz_obj[:, 1], s=2, c="red", label="Obiekt")
+    w, l = config.PALLET_WIDTH_MM, config.PALLET_LENGTH_MM
+    ax1.add_patch(patches.Rectangle((-w / 2, -l / 2), w, l, linewidth=1.5,
+                  edgecolor="blue", facecolor="none", linestyle="--", label="ROI config"))
+    ax1.set_aspect("equal")
+    ax1.set_xlabel("X [mm]")
+    ax1.set_ylabel("Y [mm]")
+    ax1.set_title(
+        f"Widok z góry — RMS={pallet_result.plane.rms_residual:.1f} mm, "
+        f"{inlier_mask.sum()} inlierów"
+    )
+    ax1.legend(markerscale=5, fontsize=8)
+
+    if len(xyz_roi):
+        ax2.scatter(xyz_roi[:, 0], xyz_roi[:, 2], s=0.3, c="lightgray", label="ROI")
+    if len(xyz_obj):
+        ax2.scatter(xyz_obj[:, 0], xyz_obj[:, 2], s=2, c="red", label="Obiekt")
+    ax2.axhline(0, color="green", linewidth=1.2, label="Powierzchnia (Z=0)")
+    ax2.axhline(noise_floor_mm, color="orange", linewidth=1, linestyle="--",
+                label=f"noise_floor={noise_floor_mm:.0f} mm")
+    ax2.set_xlabel("X [mm]")
+    ax2.set_ylabel("Z — wysokość [mm]")
+    ax2.set_title("Widok z boku (XZ)")
+    ax2.legend(markerscale=5, fontsize=8)
+
+    plt.tight_layout()
+    plt.savefig(str(path), dpi=100)
+    plt.close(fig)
+    log.info("Pallet debug zapisany: %s", path)
 
 
 # ===========================================================================
@@ -330,10 +387,10 @@ def run_pipeline(
     # Parametry dobrane dla typowej sceny: obiekty w odleglosci 0.5-3m,
     # baza ~120mm, telefony z aparatem o rozdzielczosci Full HD
     cfg = SGBMConfig(
-        num_disparities=64,   # max szukana dysparycja; 64px wystarczy dla obiektow <3m
-        block_size=7,         # rozmiar bloku porownania; 7 to kompromis szum/dokladnosc
-        uniqueness=10,        # filtr unikalnosci dopasowania; eliminuje wieloznacznosci
-        speckle_window=100,   # rozmiar okna filtru plamkowego szumu
+        num_disparities=config.SGBM_NUM_DISPARITIES,
+        block_size=7,
+        uniqueness=10,
+        speckle_window=100,
     )
     disp = compute_disparity(left_rect, right_rect, cfg)
 
@@ -381,7 +438,7 @@ def run_pipeline(
         )
 
         log.info("--- ETAP 6+7: Segmentacja i pomiar obiektu ---")
-        meas = measure_object(xyz, pallet_result, noise_floor_mm=20.0)
+        meas = measure_object(xyz, pallet_result, noise_floor_mm=config.NOISE_FLOOR_MM)
         validation = validate_measurement(meas)
         report_text = generate_report(meas, validation)
         print(report_text)
@@ -389,6 +446,13 @@ def run_pipeline(
         with open(str(out / "measurement_report.txt"), "w") as f:
             f.write(report_text)
         log.info("Raport zapisany: %s", out / "measurement_report.txt")
+
+        _save_pallet_debug(
+            out / "debug" / "pallet_debug.png",
+            pallet_result,
+            meas,
+            noise_floor_mm=config.NOISE_FLOOR_MM,
+        )
 
     except (RuntimeError, ValueError) as e:
         log.warning("Detekcja palety / pomiar nieudane: %s", e)

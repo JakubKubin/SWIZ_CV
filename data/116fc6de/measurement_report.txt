@@ -2,7 +2,7 @@
 ============================================================
   RAPORT POMIARU OBIEKTU NA EUROPALECIE
 ============================================================
-  Data/czas: 2026-05-25 11:44:44
+  Data/czas: 2026-05-25 20:02:39
 
 --- Detekcja plaszczyzny palety ---
   RMS residual:       1.80 mm

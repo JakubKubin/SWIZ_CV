@@ -70,7 +70,7 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
         (c) => c.lensDirection == CameraLensDirection.back,
         orElse: () => cameras.first,
       );
-      final ctrl = CameraController(back, ResolutionPreset.veryHigh, enableAudio: false);
+      final ctrl = CameraController(back, ResolutionPreset.max, enableAudio: false);
       await ctrl.initialize();
       if (!mounted) {
         await ctrl.dispose();

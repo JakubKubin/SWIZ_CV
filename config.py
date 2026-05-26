@@ -69,6 +69,7 @@ TERM_CRITERIA = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
 # Pipeline pomiarowy
 # ---------------------------------------------------------------------------
 MAX_DEPTH_MM: float = float(os.environ.get("MAX_DEPTH_MM", 5000.0))
+MIN_DEPTH_MM: float = float(os.environ.get("MIN_DEPTH_MM", 800.0))
 NOISE_FLOOR_MM: float = float(os.environ.get("NOISE_FLOOR_MM", 20.0))
 SGBM_NUM_DISPARITIES: int = int(os.environ.get("SGBM_NUM_DISPARITIES", 128))  # musi byc wielokrotnoscia 16
 

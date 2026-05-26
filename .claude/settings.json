@@ -7,7 +7,12 @@
       "Bash(dart analyze *)",
       "Bash(docker compose *)",
       "Bash(dir \"C:\\\\Users\\\\Kubin\\\\Desktop\\\\SWIZ_CV\\\\data\\\\e380bf56\")",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Read(//c/Users/Kubin/.claude/plans/**)",
+      "Bash(python -c \"import cv2, numpy; print\\('OK'\\)\")",
+      "PowerShell(python --version)",
+      "PowerShell(python -c \"import cv2, numpy; print\\('OK'\\)\" 2>&1)",
+      "PowerShell(python -c \"import matplotlib; print\\('matplotlib OK'\\)\" 2>&1)"
     ]
   }
 }

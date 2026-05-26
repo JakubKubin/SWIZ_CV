@@ -23,9 +23,12 @@ class AppState extends ChangeNotifier {
 
   final SharedPreferences _prefs;
 
-  AppState(this._prefs) {
+  AppState(this._prefs, {String? deviceName}) {
     _serverUrl = _prefs.getString(_kServerUrl) ?? 'http://192.168.1.1:8000';
-    deviceId = _prefs.getString(_kDeviceId) ?? _generateDeviceId();
+    final stored = _prefs.getString(_kDeviceId);
+    // Replace old random IDs (device_XXXX) with the proper device-name default.
+    final isOldRandom = stored != null && RegExp(r'^device_\d{4}$').hasMatch(stored);
+    deviceId = (!isOldRandom ? stored : null) ?? deviceName ?? _generateDeviceId();
     mac = _prefs.getString(_kMac) ?? _generateMac();
     _prefs.setString(_kDeviceId, deviceId);
     _prefs.setString(_kMac, mac);
@@ -334,12 +337,16 @@ class AppState extends ChangeNotifier {
           isCamera: ref.isCamera,
         );
       }
+      // Use server data as source of truth; fall back to ref if this device
+      // isn't listed yet (e.g. join response didn't include it).
       isLeader = ref.isLeader;
       isCamera = ref.isCamera;
+      _syncRoleFromSession(fetched);
 
       session = fetched;
-      _rememberSession(ref.sessionId, ref.isLeader, camera: ref.isCamera);
-      _log.info('Wznowiono sesję ${ref.sessionId} (stan=${fetched.state})');
+      _rememberSession(ref.sessionId, isLeader, camera: isCamera);
+      _log.info('Wznowiono sesję ${ref.sessionId} '
+          '(stan=${fetched.state}, leader=$isLeader, camera=$isCamera)');
       _connectWs();
 
       if (fetched.hasMeasurement || fetched.isDone) {
@@ -385,9 +392,23 @@ class AppState extends ChangeNotifier {
     if (sessionId == null) return;
     try {
       session = await _api.getSession(sessionId!);
+      _syncRoleFromSession(session!);
       notifyListeners();
     } catch (e, st) {
       _log.warn('Nie udało się odświeżyć sesji $sessionId', e, st);
+    }
+  }
+
+  /// Syncs [isLeader] and [isCamera] from authoritative server session data.
+  /// Called after any operation that may have changed the device's role on the server.
+  void _syncRoleFromSession(SessionData s) {
+    final myDevice = s.devices.firstWhere(
+      (d) => d.deviceId == deviceId,
+      orElse: () => DeviceInfo.empty,
+    );
+    if (myDevice.deviceId.isNotEmpty) {
+      isLeader = myDevice.isLeader;
+      isCamera = myDevice.isCamera;
     }
   }
 
@@ -505,6 +526,8 @@ class AppState extends ChangeNotifier {
             createdAt: session!.createdAt,
             hasCalibration: msg['has_calibration'] as bool? ?? session!.hasCalibration,
             hasMeasurement: msg['has_measurement'] as bool? ?? session!.hasMeasurement,
+            leftDeviceId: msg['left_device_id'] as String?,
+            rightDeviceId: msg['right_device_id'] as String?,
           );
         } else {
           refreshSession();
@@ -540,6 +563,11 @@ class AppState extends ChangeNotifier {
 
       case 'device_updated':
         _setInfo('Urządzenie ${msg['device_id']} zaktualizowane');
+        refreshSession();
+        break;
+
+      case 'cameras_assigned':
+        _setInfo('Kamery przypisane: lewa=${msg['left_device_id']}, prawa=${msg['right_device_id']}');
         refreshSession();
         break;
 

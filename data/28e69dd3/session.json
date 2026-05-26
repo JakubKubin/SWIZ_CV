@@ -1,0 +1,62 @@
+{
+  "session_id": "28e69dd3",
+  "state": "READY",
+  "created_at": 1779790132.0731661,
+  "devices": {
+    "pc": {
+      "device_id": "pc",
+      "mac": "D7:AB:A5:3F:2A:E5",
+      "is_leader": true,
+      "is_camera": false,
+      "joined_at": 1779790132.219459,
+      "ws_connected": true,
+      "calib_frame_count": 0,
+      "capture_frame_count": 0
+    },
+    "sm_s918b": {
+      "device_id": "sm_s918b",
+      "mac": "0B:15:CE:22:80:1B",
+      "is_leader": false,
+      "is_camera": true,
+      "joined_at": 1779790159.7475224,
+      "ws_connected": true,
+      "calib_frame_count": 4,
+      "capture_frame_count": 1
+    },
+    "sm_s24": {
+      "device_id": "sm_s24",
+      "mac": "E6:09:14:C6:98:00",
+      "is_leader": false,
+      "is_camera": true,
+      "joined_at": 1779790186.0080466,
+      "ws_connected": true,
+      "calib_frame_count": 4,
+      "capture_frame_count": 1
+    }
+  },
+  "calib_result": {
+    "reproj_error": 10.179480189507586,
+    "params_path": "data/28e69dd3/stereo.json",
+    "rms_left": 1.1071152604091772,
+    "rms_right": 0.8671449751877318,
+    "warning": "baza stereo nie jest pozioma: T=[-341, -338, 240] mm (oczekiwane ~[537, 0, 0]) - sprawdz ustawienie telefonow; stereo RMS=10.18 px > prog 2.0 px - telefony mogly poruszyc sie miedzy klatkami lub potrzeba wiecej par",
+    "computed_at": 1779790307.797766
+  },
+  "meas_result": null,
+  "calib_detection": {
+    "sm_s918b": {
+      "0": true,
+      "1": true,
+      "2": true,
+      "3": true
+    },
+    "sm_s24": {
+      "0": true,
+      "1": true,
+      "2": true,
+      "3": true
+    }
+  },
+  "left_device_id": null,
+  "right_device_id": null
+}
