@@ -274,7 +274,7 @@ def find_corners(image: np.ndarray) -> Optional[np.ndarray]:
     # scale = wspolczynnik z oryginalu do kopii roboczej; do przeliczenia narozników
     # z powrotem mnozymy przez 1/scale.
     h, w = gray_full.shape[:2]
-    
+
     # Automatyczne dopasowanie siatki w zaleznosci od orientacji obrazu
     is_landscape = w > h
     if is_landscape:
@@ -503,9 +503,9 @@ def _calibrate_from_data(data: CalibrationData) -> CameraParams:
              rms, len(data), data.image_size[0], data.image_size[1])
     # Wysoki RMS pojedynczej kamery (>1 px) zwykle oznacza nieostre zdjecia,
     # zle wykryte narozniki lub zbyt malo roznorodnych poz szachownicy.
-    if rms > 1.0:
-        log.warning("Wysoki RMS kalibracji kamery: %.4f px (>1 px) - sprawdz ostrosc "
-                    "i roznorodnosc ujec szachownicy", rms)
+    if rms > config.MAX_SINGLE_REPROJ_ERROR:
+        log.warning("Wysoki RMS kalibracji kamery: %.4f px (>%.1f px) - sprawdz ostrosc "
+                    "i roznorodnosc ujec szachownicy", rms, config.MAX_SINGLE_REPROJ_ERROR)
     return CameraParams(
         camera_matrix=mtx, dist_coeffs=dist, reproj_error=rms, image_size=data.image_size
     )
@@ -541,6 +541,39 @@ def baseline_warning(T: np.ndarray, rms: float) -> Optional[str]:
             f"telefony mogly poruszyc sie miedzy klatkami lub potrzeba wiecej par"
         )
     return "; ".join(msgs) if msgs else None
+
+
+def _rectify_keep_focal(K_l, D_l, K_r, D_r, size, R, T):
+    """stereoRectify z parametrem alpha dobranym tak, by ogniskowa po rektyfikacji
+    byla zblizona do sredniej ogniskowej kamer wejsciowych.
+
+    Dlaczego: przy alpha=0 (przyciecie do wspolnego obszaru, zero czarnych pikseli)
+    rektyfikacja potrafi mocno NAPOMPOWAC ogniskowa, gdy baza nie jest idealnie
+    pozioma - skladowa Z/Y wektora T wymusza obrot rektyfikacyjny, a alpha=0
+    "dozoomowuje", zeby wypelnic kadr. Efekt: obraz przybliza sie 1.5-2x i obiekt
+    przy krawedzi (np. karton na dole kadru) wypada poza obraz. alpha=1 z kolei
+    mocno kompresuje ogniskowa (czarne ramki, drobny obiekt).
+
+    f_rect maleje monotonicznie z alpha, wiec szukamy binarnie alpha, dla ktorego
+    f_rect ~ f_avg. Daje to naturalne pole widzenia i utrzymuje obiekt w kadrze.
+    stereoRectify zwraca spojne P1/P2/Q dla wybranego alpha, wiec skala glebokosci
+    pozostaje poprawna.
+    """
+    f_avg = (K_l[0, 0] + K_r[0, 0]) / 2.0
+    lo, hi = 0.0, 1.0
+    result = None
+    for _ in range(14):
+        a = 0.5 * (lo + hi)
+        result = cv2.stereoRectify(K_l, D_l, K_r, D_r, size, R, T,
+                                   flags=cv2.CALIB_ZERO_DISPARITY, alpha=a)
+        f_rect = float(result[2][0, 0])  # P1[0,0]
+        if f_rect > f_avg:   # za duzy zoom -> zwieksz alpha (oddal)
+            lo = a
+        else:                # za maly -> zmniejsz alpha (przybliz)
+            hi = a
+    log.info("Rektyfikacja: alpha=%.2f -> f_rect=%.0f px (f_avg kamer=%.0f px)",
+             a, float(result[2][0, 0]), f_avg)
+    return result
 
 
 def calibrate_stereo(
@@ -600,16 +633,13 @@ def calibrate_stereo(
         log.warning("Jakosc kalibracji stereo: %s", warn)
 
     # stereoRectify wyznacza macierze R1/R2/P1/P2/Q potrzebne do rektyfikacji.
-    # alpha=0: przycina wynik do czesci wspolnej obu kamer (zero czarnych pikseli),
-    # ogniskowa bliska oryginalnej. Dziala poprawnie gdy dystorsja jest sensowna
-    # (CALIB_FIX_K3 pilnuje, ze tak jest). alpha=1 przy pochylonych kamerach
-    # potrafi skompresowac ogniskowa 24x (np. 1400->58 px), bo musi objac
-    # pelne FOV obu kamer po duzej rotacji rektyfikacyjnej.
-    R1, R2, P1, P2, Q, _, _ = cv2.stereoRectify(
+    # alpha dobierany automatycznie tak, by ogniskowa po rektyfikacji byla zblizona
+    # do oryginalnej (patrz _rectify_keep_focal) - zapobiega "dozoomowaniu" przez
+    # alpha=0, ktore wypycha obiekt z kadru, gdy baza nie jest idealnie pozioma.
+    R1, R2, P1, P2, Q, _, _ = _rectify_keep_focal(
         left_cam.camera_matrix, left_cam.dist_coeffs,
         right_cam.camera_matrix, right_cam.dist_coeffs,
         stereo_data.image_size, R, T,
-        flags=cv2.CALIB_ZERO_DISPARITY, alpha=0,
     )
 
     # Sanity check: rectified focal length should be comparable to input camera focal lengths.

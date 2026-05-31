@@ -240,7 +240,7 @@ def generate_synthetic_scene(
 def compute_depth_error(
     depth_est: np.ndarray,
     depth_gt: np.ndarray,
-    max_depth_mm: float = 4000.0,
+    max_depth_mm: float = config.MAX_DEPTH_MM,
 ) -> dict:
     """Oblicza metryki bledu mapy glebokosci wzgledem ground-truth.
 

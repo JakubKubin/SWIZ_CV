@@ -61,8 +61,8 @@ class SGBMConfig:
 def auto_sgbm_cfg(
     stereo: "StereoParams",
     img_w: int,
-    max_depth_mm: float = 5000.0,
-    min_depth_mm: float = 800.0,
+    max_depth_mm: float = config.MAX_DEPTH_MM,
+    min_depth_mm: float = config.MIN_DEPTH_MM,
 ) -> "SGBMConfig":
     """Compute SGBM min_disparity + num_disparities from calibration geometry.
 
@@ -276,9 +276,14 @@ def compute_disparity(
     disp_raw = matcher.compute(gray_l, gray_r)
     disp_float = disp_raw.astype(np.float32) / 16.0
 
-    # Piksele z dysparycja <= 0 oznaczaja brak dopasowania po stronie lewej
-    # lub prawej - zerujemy je, aby nie powodowaly bledow przy konwersji do glebokosci
-    invalid = (disp_float <= 0) | (disp_float >= num_disp)
+    # Wazne dysparycje leza w zakresie [min_disparity, min_disparity+num_disp).
+    # Piksele niedopasowane OpenCV znakuje wartoscia (min_disparity-1), wiec dolny
+    # prog to min_disparity (a nie 0 - przy min_disparity>0 wartosc 0 jest "ponizej"
+    # i tak bylaby odrzucona). Gorny prog to min_disparity+num_disp, NIE num_disp -
+    # inaczej przy min_disparity>0 obcinamy poprawne dysparycje bliskich obiektow.
+    lo = cfg.min_disparity
+    hi = cfg.min_disparity + num_disp
+    invalid = (disp_float <= 0) | (disp_float < lo) | (disp_float >= hi)
     disp_float[invalid] = 0.0
 
     valid_px = int((disp_float > 0).sum())
@@ -296,10 +301,10 @@ def compute_disparity(
                     "zla rektyfikacja; chmura punktow bedzie rzadka", coverage)
     # Wartosci blisko gornego progu sugeruja, ze obiekty sa blizej niz zaklada
     # num_disparities - czesc dysparycji moze byc obcieta (utrata bliskich punktow).
-    if valid_px and float(disp_float.max()) >= num_disp - 1:
-        log.warning("Dysparycja: max=%.1f px blisko limitu num_disparities=%d - "
+    if valid_px and float(disp_float.max()) >= hi - 1:
+        log.warning("Dysparycja: max=%.1f px blisko limitu min_disp+num_disp=%d - "
                     "bliskie obiekty moga byc obciete, rozwaz wieksze num_disparities",
-                    float(disp_float.max()), num_disp)
+                    float(disp_float.max()), hi)
     return disp_float
 
 
@@ -310,7 +315,7 @@ def compute_disparity(
 def disparity_to_depth(
     disparity: np.ndarray,
     Q: np.ndarray,
-    max_depth_mm: float = 5000.0,
+    max_depth_mm: float = config.MAX_DEPTH_MM,
 ) -> np.ndarray:
     """Przelicza dysparycje na glebokos w milimetrach uzywajac macierzy Q.
 

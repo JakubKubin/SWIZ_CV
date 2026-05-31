@@ -26,6 +26,7 @@ import cv2
 from pathlib import Path
 
 from calibration import StereoParams, load_params
+import config
 
 log = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ def build_pointcloud(
     disparity: np.ndarray,
     Q: np.ndarray,
     color_image: np.ndarray | None = None,
-    max_depth_mm: float = 5000.0,
+    max_depth_mm: float = config.MAX_DEPTH_MM,
     min_depth_mm: float = 50.0,
 ) -> tuple[np.ndarray, np.ndarray | None]:
     """Buduje chmure punktow 3D z mapy dysparycji i macierzy Q.

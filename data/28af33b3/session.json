@@ -1,0 +1,87 @@
+{
+  "session_id": "28af33b3",
+  "state": "DONE",
+  "created_at": 1780254096.5747027,
+  "devices": {
+    "pc": {
+      "device_id": "pc",
+      "mac": "6F:95:D7:10:59:F9",
+      "is_leader": true,
+      "is_camera": false,
+      "joined_at": 1780254096.7277234,
+      "ws_connected": true,
+      "calib_frame_count": 0,
+      "capture_frame_count": 0
+    },
+    "sm_s918b": {
+      "device_id": "sm_s918b",
+      "mac": "0B:15:CE:22:80:1B",
+      "is_leader": false,
+      "is_camera": true,
+      "joined_at": 1780254106.0892518,
+      "ws_connected": true,
+      "calib_frame_count": 9,
+      "capture_frame_count": 1
+    },
+    "sm_s928b": {
+      "device_id": "sm_s928b",
+      "mac": "E6:09:14:C6:98:00",
+      "is_leader": false,
+      "is_camera": true,
+      "joined_at": 1780254210.6640296,
+      "ws_connected": true,
+      "calib_frame_count": 9,
+      "capture_frame_count": 1
+    }
+  },
+  "calib_result": {
+    "reproj_error": 1.6986936596908706,
+    "params_path": "data/28af33b3/stereo.json",
+    "rms_left": 1.534037154441785,
+    "rms_right": 1.3612838477030282,
+    "warning": null,
+    "computed_at": 1780254860.7758555
+  },
+  "meas_result": {
+    "width_mm": 157.10900588143812,
+    "length_mm": 79.47268406176097,
+    "height_mm": 88.26806962014568,
+    "volume_voxel_mm3": 119167.74607937339,
+    "volume_bbox_mm3": 1102104.0297195034,
+    "volume_hull_mm3": 192270.35822798172,
+    "fill_ratio": 0.10812749329090357,
+    "validation_passed": true,
+    "pallet_rms_mm": 3.7017858028411865,
+    "n_object_pts": 948,
+    "n_pallet_inliers": 24817,
+    "issues": [],
+    "report": "\n============================================================\n  RAPORT POMIARU OBIEKTU NA EUROPALECIE\n============================================================\n  Data/czas: 2026-05-31 19:15:28\n\n--- Detekcja plaszczyzny palety ---\n  RMS residual:       3.70 mm\n  Inliery RANSAC:     24817\n  Pokrycie palety:    516.7 %\n\n--- Wymiary obiektu (bounding box 3D) ---\n  Szerokosc (X):    157.1 mm\n  Dlugosc   (Y):     79.5 mm\n  Wysokosc  (Z):     88.3 mm\n  Liczba pkt.:   948\n\n--- Objetosc obiektu ---\n  Voxel-column:        119168 mm^3 =   0.12 l  (komorka 10 mm, 16 kom.)\n  Bounding box:       1102104 mm^3 =   1.10 l\n  Convex hull:         192270 mm^3 =   0.19 l\n  Wsk. pelnosci: 10.8 % (voxel / bbox)\n\n--- Walidacja ---\n  Status: PASS\n  Brak problemow - pomiar prawidlowy\n============================================================",
+    "measured_at": 1780254928.0465581
+  },
+  "calib_detection": {
+    "sm_s918b": {
+      "0": true,
+      "1": true,
+      "2": true,
+      "3": false,
+      "4": true,
+      "5": true,
+      "6": true,
+      "7": true,
+      "8": true
+    },
+    "sm_s928b": {
+      "0": true,
+      "1": true,
+      "2": true,
+      "3": false,
+      "4": true,
+      "5": true,
+      "6": true,
+      "7": true,
+      "8": true
+    }
+  },
+  "left_device_id": null,
+  "right_device_id": null
+}

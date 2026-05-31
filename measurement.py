@@ -109,8 +109,8 @@ class ValidationReport:
 
 def segment_object(
     xyz_pallet: np.ndarray,
-    noise_floor_mm: float = 20.0,
-    max_height_mm: float = 2000.0,
+    noise_floor_mm: float = config.NOISE_FLOOR_MM,
+    max_height_mm: float = config.MAX_OBJECT_HEIGHT_MM,
 ) -> np.ndarray:
     """Zwraca maska bool punktow nalezacych do obiektu nad paleta.
 
@@ -323,8 +323,8 @@ def estimate_volume(
 def measure_object(
     xyz: np.ndarray,
     pallet_result: PalletDetectionResult,
-    noise_floor_mm: float = 20.0,
-    max_height_mm: float = 2000.0,
+    noise_floor_mm: float = config.NOISE_FLOOR_MM,
+    max_height_mm: float = config.MAX_OBJECT_HEIGHT_MM,
 ) -> MeasurementResult:
     """Segmentuje obiekt nad paleta i mierzy jego wymiary 3D.
 
@@ -387,8 +387,8 @@ def validate_measurement(
     result: MeasurementResult,
     pallet_width_mm: float = config.PALLET_WIDTH_MM,
     pallet_length_mm: float = config.PALLET_LENGTH_MM,
-    min_height_mm: float = 10.0,
-    max_height_mm: float = 2000.0,
+    min_height_mm: float = config.NOISE_FLOOR_MM,
+    max_height_mm: float = config.MAX_OBJECT_HEIGHT_MM,
     max_pallet_rms_mm: float = 30.0,
     min_inliers: int = 100,
 ) -> ValidationReport:

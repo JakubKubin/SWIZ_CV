@@ -13,6 +13,7 @@ import cv2
 import numpy as np
 import pytest
 
+import config
 from pallet import (
     PlaneModel,
     PalletDetectionResult,
@@ -55,7 +56,8 @@ def _make_pallet_scene(
     """Generuje czystą chmure punktow: plaszczyzna palety + pudelko nad nia.
 
     Uklad kamery: os Z od kamery (wieksze Z = dalej).
-    Paleta: Z = pallet_z ± noise_mm, XY w [-600,600] x [-400,400].
+    Paleta: Z = pallet_z ± noise_mm, XY wypelnia obrys palety z configu
+        (±PALLET_WIDTH_MM/2 x ±PALLET_LENGTH_MM/2).
     Pudelko: centrum XY = box_center_xy, Z w [pallet_z-box_h, pallet_z].
 
     Args:
@@ -75,9 +77,11 @@ def _make_pallet_scene(
     bw, bl, bh = box_dims
     cx, cy = box_center_xy
 
-    # Punkty palety - plaszczyzna Z=pallet_z, XY w [-600,600] x [-400,400]
-    px = rng.uniform(-600, 600, n_pallet).astype(np.float32)
-    py = rng.uniform(-400, 400, n_pallet).astype(np.float32)
+    # Punkty palety - plaszczyzna Z=pallet_z, XY wypelnia obrys palety z configu
+    half_w = config.PALLET_WIDTH_MM / 2.0
+    half_l = config.PALLET_LENGTH_MM / 2.0
+    px = rng.uniform(-half_w, half_w, n_pallet).astype(np.float32)
+    py = rng.uniform(-half_l, half_l, n_pallet).astype(np.float32)
     pz = np.full(n_pallet, pallet_z, dtype=np.float32) + \
          rng.normal(0, noise_mm, n_pallet).astype(np.float32)
     pallet_pts = np.column_stack([px, py, pz])
@@ -202,31 +206,38 @@ class TestPalletTransform:
             assert abs(d_cam - d_pal) < 0.01, f"Odleglosc sie zmienila: {d_cam:.3f} vs {d_pal:.3f}"
 
     def test_roi_filter_excludes_far_points(self):
+        # Granica ROI z configu - test wykryje zla zmiane PALLET_WIDTH/LENGTH_MM
+        half_w = config.PALLET_WIDTH_MM / 2.0
+        half_l = config.PALLET_LENGTH_MM / 2.0
         rng = np.random.RandomState(0)
-        # Punkty z XY wyraznie poza ROI
+        # Punkty z XY wyraznie poza ROI (powyzej polowy gabarytu + margines)
         xyz_far = np.column_stack([
-            rng.uniform(700, 1000, 100),
-            rng.uniform(500, 800, 100),
+            rng.uniform(half_w + 10, half_w + 300, 100),
+            rng.uniform(half_l + 10, half_l + 300, 100),
             np.zeros(100),
         ]).astype(np.float32)
         mask = filter_roi(xyz_far)
         assert mask.sum() == 0, "Punkty poza ROI nie zostaly wykluczone"
 
     def test_roi_filter_includes_interior_points(self):
+        half_w = config.PALLET_WIDTH_MM / 2.0
+        half_l = config.PALLET_LENGTH_MM / 2.0
         rng = np.random.RandomState(0)
-        # Punkty wyraznie wewnatrz ROI
+        # Punkty wyraznie wewnatrz ROI (90% gabarytu)
         xyz_in = np.column_stack([
-            rng.uniform(-500, 500, 100),
-            rng.uniform(-300, 300, 100),
+            rng.uniform(-0.9 * half_w, 0.9 * half_w, 100),
+            rng.uniform(-0.9 * half_l, 0.9 * half_l, 100),
             np.zeros(100),
         ]).astype(np.float32)
         mask = filter_roi(xyz_in)
         assert mask.sum() == 100
 
     def test_roi_boundary_exact(self):
+        half_w = config.PALLET_WIDTH_MM / 2.0
+        half_l = config.PALLET_LENGTH_MM / 2.0
         pts = np.array([
-            [600.0, 400.0, 0.0],   # na granicy - wewnatrz
-            [600.1, 400.1, 0.0],   # tuż za granica - na zewnatrz
+            [half_w, half_l, 0.0],              # na granicy - wewnatrz
+            [half_w + 0.1, half_l + 0.1, 0.0],  # tuz za granica - na zewnatrz
         ], dtype=np.float32)
         mask = filter_roi(pts)
         assert mask[0] == True

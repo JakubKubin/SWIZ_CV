@@ -18,10 +18,10 @@ import pytest
 # Wyniki wizualne
 TEST_OUTPUT_DIR = Path(__file__).parent / "test_output"
 
-os.environ["CHECKERBOARD_ROWS"] = "7"
-os.environ["CHECKERBOARD_COLS"] = "5"
-os.environ["SQUARE_SIZE_MM"] = "25.0"
-
+# Geometria szachownicy (liczba naroznikow, rozmiar kwadratu) pochodzi
+# z config.py - testy uzywaja tej samej planszy co produkcja. Generatory
+# danych syntetycznych skaluja odleglosc robocza do rozmiaru planszy, wiec
+# dzialaja poprawnie dla dowolnych wartosci BOARD_ROWS/COLS/SQUARE_SIZE_MM.
 import calibration as cal
 
 IMG_W, IMG_H = 640, 480
@@ -92,6 +92,28 @@ def _generate_checkerboard_images(
     return images
 
 
+def _sample_board_pose(rng, K, rows, cols, sq_size, img_size, max_rot=0.5):
+    """Losuje poze planszy (rvec, tvec) tak, by miescila sie w kadrze niezaleznie
+    od jej geometrii z configu.
+
+    Odleglosc robocza z dobierana jest do rozmiaru planszy: dluzszy bok ma zajac
+    ~polowe kadru. Dzieki temu plansza 5x8 po 42 mm (produkcyjna) i mala plansza
+    testowa daja porownywalne pokrycie obrazu, a wzorzec nie wychodzi poza kadr.
+    Przesuniecie XY ograniczone do ~12% kadru (w jednostkach z), by zostawic
+    margines na rotacje.
+    """
+    fx, fy = float(K[0, 0]), float(K[1, 1])
+    w, h = img_size
+    x_ext = (rows - 1) * sq_size   # rozpietosc planszy w osi X [mm]
+    y_ext = (cols - 1) * sq_size   # rozpietosc planszy w osi Y [mm]
+    z_fit = max(fx * x_ext / (0.5 * w), fy * y_ext / (0.5 * h))
+    z = rng.uniform(z_fit, z_fit * 1.5)
+    rvec = rng.uniform(-max_rot, max_rot, (3, 1)).astype(np.float64)
+    tx = rng.uniform(-0.12 * w, 0.12 * w) * z / fx
+    ty = rng.uniform(-0.12 * h, 0.12 * h) * z / fy
+    return rvec, np.array([[tx], [ty], [z]], dtype=np.float64)
+
+
 def _make_projectpoints_calib_data(K, dist, rows, cols, sq_size, num_views, img_size, rng):
     """Generuje punkty kalibracyjne przez idealną 3D projekcje (cv2.projectPoints).
 
@@ -106,11 +128,7 @@ def _make_projectpoints_calib_data(K, dist, rows, cols, sq_size, num_views, img_
     w, h = img_size
 
     for _ in range(num_views * 10):
-        rvec = rng.uniform(-0.5, 0.5, (3, 1)).astype(np.float64)
-        z = rng.uniform(350.0, 600.0)
-        tx = rng.uniform(-sq_size * cols * 0.3, sq_size * cols * 0.3)
-        ty = rng.uniform(-sq_size * rows * 0.3, sq_size * rows * 0.3)
-        tvec = np.array([[tx], [ty], [z]], dtype=np.float64)
+        rvec, tvec = _sample_board_pose(rng, K, rows, cols, sq_size, img_size, max_rot=0.5)
 
         pts, _ = cv2.projectPoints(objp, rvec, tvec, K, dist)
         pts = pts.reshape(-1, 1, 2).astype(np.float32)
@@ -148,11 +166,7 @@ def _make_projectpoints_stereo_data(
     w, h = img_size
 
     for _ in range(num_views * 10):
-        rvec = rng.uniform(-0.4, 0.4, (3, 1)).astype(np.float64)
-        z = rng.uniform(400.0, 800.0)
-        tx = rng.uniform(-sq_size * cols * 0.15, sq_size * cols * 0.15)
-        ty = rng.uniform(-sq_size * rows * 0.15, sq_size * rows * 0.15)
-        tvec_left = np.array([[tx], [ty], [z]], dtype=np.float64)
+        rvec, tvec_left = _sample_board_pose(rng, K, rows, cols, sq_size, img_size, max_rot=0.4)
         tvec_right = tvec_left - T_stereo
 
         lp, _ = cv2.projectPoints(objp, rvec, tvec_left, K, dist)
@@ -191,6 +205,40 @@ def _make_highres_board_image() -> np.ndarray:
     M[1, 2] += (canvas_h - h) / 2.0
     return cv2.warpAffine(flat, M, (canvas_w, canvas_h),
                           flags=cv2.INTER_LINEAR, borderValue=(180, 180, 180))
+
+
+def _apply_lens_distortion(img: np.ndarray, K: np.ndarray, dist: np.ndarray) -> np.ndarray:
+    """Naklada dystorsje obiektywu na geometrycznie prosty obraz.
+
+    Dla kazdego piksela obrazu znieksztalconego liczymy, z jakiego miejsca obrazu
+    idealnego pochodzi (undistortPoints), i probkujemy przez remap. Dzieki temu
+    proste linie szachownicy staja sie wygiete - jak w prawdziwym obiektywie.
+    Operacja jest odwracalna przez cv2.undistort z tym samym (K, dist).
+    """
+    h, w = img.shape[:2]
+    ys, xs = np.mgrid[0:h, 0:w]
+    pts = np.stack([xs.ravel(), ys.ravel()], axis=1).astype(np.float32).reshape(-1, 1, 2)
+    ideal = cv2.undistortPoints(pts, K, dist, P=K).reshape(h, w, 2)
+    return cv2.remap(img, ideal[..., 0].astype(np.float32), ideal[..., 1].astype(np.float32),
+                     cv2.INTER_LINEAR, borderValue=(180, 180, 180))
+
+
+def _render_planar_board(board_bgr, K, rvec, tvec, img_size):
+    """Renderuje plaska szachownice widziana przez kamere (K, zero dystorsji) z pozy
+    (rvec, tvec).
+
+    Rzut plaszczyzny przez kamere pinhole to dokladna homografia, wiec mapujemy
+    4 narozniki obrazu planszy na ich rzut 3D i uzywamy warpPerspective. Wynik jest
+    geometrycznie poprawny - nadaje sie do rektyfikacji pary stereo. Wspolrzedne 3D
+    planszy [mm] sa rowne pikselom obrazu planszy (umowna, ale spojna skala).
+    """
+    h_b, w_b = board_bgr.shape[:2]
+    corners_3d = np.array([[0, 0, 0], [w_b, 0, 0], [w_b, h_b, 0], [0, h_b, 0]], np.float64)
+    proj, _ = cv2.projectPoints(corners_3d, rvec, tvec, K, np.zeros(5))
+    src = np.array([[0, 0], [w_b, 0], [w_b, h_b], [0, h_b]], np.float32)
+    H = cv2.getPerspectiveTransform(src, proj.reshape(-1, 2).astype(np.float32))
+    return cv2.warpPerspective(board_bgr, H, img_size,
+                               flags=cv2.INTER_LINEAR, borderValue=(180, 180, 180))
 
 
 def _save_visual(img: np.ndarray, subdir: str, name: str, visualize: bool) -> None:
@@ -472,37 +520,103 @@ class TestStereoCalibration:
 
 
 class TestUndistortAndRectify:
-    def test_undistort_returns_same_shape(self, synth_single_dir, visualize):
-        d, _, _ = synth_single_dir
-        paths = cal.get_image_paths(d)
-        params = cal.calibrate_single(paths)
-        frame = cv2.imread(paths[0])
-        assert frame is not None
-        undistorted = params.undistort(frame)
-        assert undistorted.shape == frame.shape
+    def test_undistort_corrects_distortion(self, visualize):
+        """Undistort prostuje wygieta przez obiektyw szachownice.
+
+        Renderujemy prosta plansze, nakladamy realna dystorsje beczkowata, a
+        nastepnie korygujemy ja przez CameraParams.undistort. Obraz po korekcji
+        musi wyraznie roznic sie od znieksztalconego (regresja: wczesniej dane
+        testowe mialy zerowa dystorsje, wiec before == after) i jednoczesnie byc
+        blizszy oryginalowi niz wersja znieksztalcona.
+        """
+        K, _ = _make_ground_truth_camera()
+        dist = np.array([0.35, -0.12, 0.0, 0.0, 0.0])  # wyrazna beczka (k1>0)
+        board = _make_flat_checkerboard(cal.BOARD_ROWS, cal.BOARD_COLS, sq_px=40)
+        h_b, w_b = board.shape[:2]
+        fx, fy = K[0, 0], K[1, 1]
+        # Plansza fronto-parallel, wysrodkowana, wypelnia ~70% kadru
+        z = max(fx * w_b / (0.7 * IMG_W), fy * h_b / (0.7 * IMG_H))
+        tvec = np.array([[-w_b / 2.0], [-h_b / 2.0], [z]])
+        rvec = np.zeros((3, 1))
+        straight = _render_planar_board(board, K, rvec, tvec, (IMG_W, IMG_H))
+        distorted = _apply_lens_distortion(straight, K, dist)
+
+        params = cal.CameraParams(K, dist, 0.0, (IMG_W, IMG_H))
+        undistorted = params.undistort(distorted)
+        assert undistorted.shape == distorted.shape
+
+        # Maska obszaru planszy (pomijamy tlo) - liczymy roznice tam, gdzie cos jest
+        roi = np.any(straight < 150, axis=2)
+        changed = float(np.abs(distorted.astype(int) - undistorted.astype(int))[roi].mean())
+        residual = float(np.abs(undistorted.astype(int) - straight.astype(int))[roi].mean())
+        assert changed > 3.0, f"Undistort nic nie zmienil (zmiana={changed:.2f})"
+        assert residual < changed, (
+            f"Undistort nie zblizyl obrazu do nieznieksztalconego "
+            f"(residual={residual:.2f} >= zmiana={changed:.2f})"
+        )
         _save_visual(
-            _side_by_side(frame, undistorted, "Oryginal", "Po undistort"),
+            _side_by_side(distorted, undistorted, "Znieksztalcony (obiektyw)", "Po undistort"),
             "undistort", "before_after", visualize,
         )
 
-    def test_rectify_maps_shape(self, synth_stereo_dirs, visualize):
-        ldir, rdir, _, _, _ = synth_stereo_dirs
-        lpaths = cal.get_image_paths(ldir)
-        rpaths = cal.get_image_paths(rdir)
-        sp = cal.calibrate_stereo(lpaths, rpaths)
+    def test_rectify_aligns_epipolar_lines(self, visualize):
+        """Rektyfikacja wyrownuje linie epipolarne pary stereo z konwergencja.
+
+        Budujemy poprawny geometrycznie uklad stereo: kamery sa wzajemnie obrocone
+        (pitch/yaw/roll) + przesuniete o baze. Plansze rzutujemy do obu kamer przez
+        homografie (dokladny pinhole plaszczyzny). Przed rektyfikacja odpowiadajace
+        sobie narozniki maja rozne wspolrzedne Y; po rektyfikacji - te same (z dok-
+        ladnoscia do ~1 px). To weryfikuje, ze R1/R2/P1/P2/Q sa poprawne.
+        """
+        K, _ = _make_ground_truth_camera()
+        dist = np.zeros(5)
+        # Wzajemne polozenie kamer: X_prawa = R @ X_lewa + T (konwencja OpenCV)
+        R_rel = cv2.Rodrigues(np.array([0.03, 0.05, 0.06]))[0]  # pitch/yaw/roll ~2-3.5°
+        T_rel = np.array([[100.0], [5.0], [0.0]])               # baza + maly offset Y
+
+        R1, R2, P1, P2, Q, _, _ = cv2.stereoRectify(
+            K, dist, K, dist, (IMG_W, IMG_H), R_rel, T_rel, alpha=0,
+        )
+        sp = cal.StereoParams(
+            left=cal.CameraParams(K, dist, 0.0, (IMG_W, IMG_H)),
+            right=cal.CameraParams(K, dist, 0.0, (IMG_W, IMG_H)),
+            R=R_rel, T=T_rel, R1=R1, R2=R2, P1=P1, P2=P2, Q=Q,
+        )
+
+        # Poza planszy w ukladzie lewej kamery + jej poza w ukladzie prawej
+        board = _make_flat_checkerboard(cal.BOARD_ROWS, cal.BOARD_COLS, sq_px=40)
+        h_b, w_b = board.shape[:2]
+        z = max(K[0, 0] * w_b / (0.5 * IMG_W), K[1, 1] * h_b / (0.5 * IMG_H))
+        rvec_l = np.array([[0.15], [-0.10], [0.0]])
+        tvec_l = np.array([[-w_b / 2.0], [-h_b / 2.0], [z]])
+        Rl = cv2.Rodrigues(rvec_l)[0]
+        rvec_r = cv2.Rodrigues(R_rel @ Rl)[0]
+        tvec_r = R_rel @ tvec_l + T_rel
+
+        # Analityczna weryfikacja epipolarna na wewnetrznych naroznikach planszy
+        objp = np.zeros((cal.BOARD_ROWS * cal.BOARD_COLS, 3), np.float32)
+        objp[:, :2] = np.mgrid[0:cal.BOARD_ROWS, 0:cal.BOARD_COLS].T.reshape(-1, 2) * 40 + 40
+        lpx = cv2.projectPoints(objp, rvec_l, tvec_l, K, dist)[0].reshape(-1, 1, 2)
+        rpx = cv2.projectPoints(objp, rvec_r, tvec_r, K, dist)[0].reshape(-1, 1, 2)
+        dy_before = float(np.abs(lpx[:, 0, 1] - rpx[:, 0, 1]).max())
+
+        l_rect_pts = cv2.undistortPoints(lpx, K, dist, R=R1, P=P1).reshape(-1, 2)
+        r_rect_pts = cv2.undistortPoints(rpx, K, dist, R=R2, P=P2).reshape(-1, 2)
+        dy_after = float(np.abs(l_rect_pts[:, 1] - r_rect_pts[:, 1]).max())
+
+        assert dy_before > 5.0, f"Para juz wyrownana (dy_before={dy_before:.1f} px) - test nieczuly"
+        assert dy_after < 1.5, f"Rektyfikacja nie wyrownala linii epipolarnych (dy_after={dy_after:.1f} px)"
+
+        # Wizualizacja: render pary + remap + linie epipolarne
+        l_img = _render_planar_board(board, K, rvec_l, tvec_l, (IMG_W, IMG_H))
+        r_img = _render_planar_board(board, K, rvec_r, tvec_r, (IMG_W, IMG_H))
         map1L, map2L, map1R, map2R = sp.rectify_maps()
-        assert map1L.shape[:2] == (IMG_H, IMG_W)
-        assert map1R.shape[:2] == (IMG_H, IMG_W)
-        # Rektyfikacja pierwszej pary + linie epipolarne - po rektyfikacji
-        # odpowiadajace sobie punkty powinny lezec na tej samej linii poziomej.
-        l_img = cv2.imread(lpaths[0])
-        r_img = cv2.imread(rpaths[0])
-        assert l_img is not None and r_img is not None
+        assert map1L.shape[:2] == (IMG_H, IMG_W) and map1R.shape[:2] == (IMG_H, IMG_W)
         l_rect = cv2.remap(l_img, map1L, map2L, cv2.INTER_LINEAR)
         r_rect = cv2.remap(r_img, map1R, map2R, cv2.INTER_LINEAR)
-        combined = _side_by_side(l_rect, r_rect, "Lewa (rect)", "Prawa (rect)")
-        _save_visual(_draw_epipolar_lines(combined), "rectify",
-                     "pair_000_epipolar", visualize)
+        before = _draw_epipolar_lines(_side_by_side(l_img, r_img, "Lewa", "Prawa"))
+        after = _draw_epipolar_lines(_side_by_side(l_rect, r_rect, "Lewa (rect)", "Prawa (rect)"))
+        _save_visual(np.vstack([before, after]), "rectify", "pair_000_epipolar", visualize)
 
     def test_stereo_params_has_rectify_matrices(self, synth_stereo_dirs):
         ldir, rdir, _, _, _ = synth_stereo_dirs
@@ -588,8 +702,13 @@ class TestResolutionConsistency:
         assert c_native is not None, "Detekcja natywna nieudana"
         assert c_scaled is not None, "Detekcja ze scale-back nieudana"
         assert c_native.shape == c_scaled.shape == (cal.BOARD_ROWS * cal.BOARD_COLS, 1, 2)
-        # Scale-back + cornerSubPix na pelnej rozdzielczosci -> niemal identyczne wyniki
-        assert np.max(np.abs(c_native - c_scaled)) < 3.0
+        # Scale-back + cornerSubPix na pelnej rozdzielczosci -> niemal identyczne wyniki.
+        # findChessboardCorners moze zwrocic narozniki w odwrotnej kolejnosci (obrot
+        # planszy o 180 stopni jest niejednoznaczny) - dopuszczamy oba kierunki, bo
+        # interesuja nas POZYCJE naroznikow w natywnej skali, nie kierunek obchodzenia.
+        diff_fwd = np.max(np.abs(c_native - c_scaled))
+        diff_rev = np.max(np.abs(c_native - c_scaled[::-1]))
+        assert min(diff_fwd, diff_rev) < 3.0
         # Dowod skali natywnej: narozniki siegaja daleko poza prog zmniejszania nie bylby
         # mozliwy, gdyby zwracano wspolrzedne kopii 1920 px
         assert c_scaled[:, 0, 0].max() > 1000
